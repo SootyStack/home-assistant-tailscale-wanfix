@@ -1,0 +1,334 @@
+diff --git a/control/controlclient/auto.go b/control/controlclient/auto.go
+index 783ca36..65a3f84 100644
+--- a/control/controlclient/auto.go
++++ b/control/controlclient/auto.go
+@@ -8,6 +8,7 @@
+ 	"errors"
+ 	"fmt"
+ 	"net/http"
++	"net/netip"
+ 	"sync"
+ 	"sync/atomic"
+ 	"time"
+@@ -135,11 +136,17 @@ type Auto struct {
+ 
+ 	lastStatus atomic.Pointer[Status]
+ 
+-	paused         bool        // whether we should stop making HTTP requests
+-	unpauseWaiters []chan bool // chans that gets sent true (once) on wake, or false on Shutdown
+-	loggedIn       bool        // true if currently logged in
+-	loginGoal      *LoginGoal  // non-nil if some login activity is desired
+-	inMapPoll      bool        // true once we get the first MapResponse in a stream; false when HTTP response ends
++	paused          bool        // whether we should stop making HTTP requests
++	unpauseWaiters  []chan bool // chans that gets sent true (once) on wake, or false on Shutdown
++	loggedIn        bool        // true if currently logged in
++	loginGoal       *LoginGoal  // non-nil if some login activity is desired
++	inMapPoll       bool        // true once we get the first MapResponse in a stream; false when HTTP response ends
++	haveReceivedMap bool        // true after the first MapResponse in this process
++
++	// lastSTUNEndpointIPv4s is the most recently advertised set of public IPv4
++	// addresses discovered via STUN. A new IP in this set indicates that our
++	// upstream NAT path may have changed even if the local interface did not.
++	lastSTUNEndpointIPv4s map[netip.Addr]struct{}
+ 
+ 	authCtx    context.Context // context used for auth requests
+ 	mapCtx     context.Context // context used for netmap and update requests
+@@ -302,6 +309,21 @@ func (c *Auto) restartMap() {
+ 	c.updateControl()
+ }
+ 
++// restartMapWithFreshControlTransport is like restartMap, but also closes the
++// Noise connection pool so the next map request must establish a new
++// underlying connection. This is needed when an upstream NAT change silently
++// blackholes an otherwise healthy-looking control connection.
++func (c *Auto) restartMapWithFreshControlTransport(reason string) {
++	c.mu.Lock()
++	c.cancelMapCtxLocked()
++	synced := c.inMapPoll
++	c.direct.resetNoiseClient()
++	c.mu.Unlock()
++
++	c.logf("[v1] restartMap: fresh control transport; reason=%s synced=%v", reason, synced)
++	c.updateControl()
++}
++
+ func (c *Auto) authRoutine() {
+ 	defer close(c.authDone)
+ 	bo := backoff.NewBackoff("authRoutine", c.logf, 30*time.Second)
+@@ -443,6 +465,7 @@ func (mrs mapRoutineState) UpdateFullNetmap(nm *netmap.NetworkMap) {
+ 
+ 	c.mu.Lock()
+ 	c.inMapPoll = true
++	c.haveReceivedMap = true
+ 	c.expiry = nm.SelfKeyExpiry()
+ 	stillAuthed := c.loggedIn
+ 	c.logf("[v1] mapRoutine: netmap received: loggedIn=%v inMapPoll=true", stillAuthed)
+@@ -743,6 +766,7 @@ func (c *Auto) Logout(ctx context.Context) error {
+ 	}
+ 	c.mu.Lock()
+ 	c.loggedIn = false
++	c.haveReceivedMap = false
+ 	c.cancelAuthCtxLocked()
+ 	c.cancelMapCtxLocked()
+ 	c.mu.Unlock()
+@@ -761,9 +785,55 @@ func (c *Auto) SetExpirySooner(ctx context.Context, expiry time.Time) error {
+ // It does not retain the provided slice.
+ func (c *Auto) UpdateEndpoints(endpoints []tailcfg.Endpoint) {
+ 	changed := c.direct.SetEndpoints(endpoints)
+-	if changed {
+-		c.updateControl()
++	if !changed {
++		return
++	}
++	if c.noteSTUNEndpointIPs(endpoints) {
++		c.restartMapWithFreshControlTransport("new STUN endpoint IP")
++		return
+ 	}
++	c.updateControl()
++}
++
++// noteSTUNEndpointIPs records the IPs in STUN-discovered endpoints and reports
++// whether a newly observed IP should force a fresh control transport.
++//
++// Port-only NAT rebinding is deliberately ignored. Empty STUN results do not
++// erase the baseline, and the first non-empty result only establishes it.
++func (c *Auto) noteSTUNEndpointIPs(endpoints []tailcfg.Endpoint) bool {
++	current := make(map[netip.Addr]struct{})
++	for _, ep := range endpoints {
++		if ep.Type != tailcfg.EndpointSTUN {
++			continue
++		}
++		ip := ep.Addr.Addr().Unmap()
++		if ip.Is4() {
++			current[ip] = struct{}{}
++		}
++	}
++	if len(current) == 0 {
++		return false
++	}
++
++	c.mu.Lock()
++	defer c.mu.Unlock()
++
++	var hasNewIP bool
++	for ip := range current {
++		if _, ok := c.lastSTUNEndpointIPv4s[ip]; !ok {
++			hasNewIP = true
++			break
++		}
++	}
++	hadBaseline := len(c.lastSTUNEndpointIPv4s) != 0
++	c.lastSTUNEndpointIPv4s = current
++
++	return hadBaseline &&
++		hasNewIP &&
++		c.loggedIn &&
++		c.haveReceivedMap &&
++		!c.paused &&
++		!c.closed
+ }
+ 
+ // SetDiscoPublicKey sets the client's Disco public to key and sends the change
+diff --git a/control/controlclient/controlclient_test.go b/control/controlclient/controlclient_test.go
+index dca1d8d..66c4fb2 100644
+--- a/control/controlclient/controlclient_test.go
++++ b/control/controlclient/controlclient_test.go
+@@ -20,6 +20,7 @@
+ 	"time"
+ 
+ 	"tailscale.com/control/controlknobs"
++	"tailscale.com/control/ts2021"
+ 	"tailscale.com/health"
+ 	"tailscale.com/net/bakedroots"
+ 	"tailscale.com/net/connectproxy"
+@@ -186,6 +187,163 @@ func TestCanSkipStatus(t *testing.T) {
+ 
+ }
+ 
++func TestSTUNEndpointIPChangeResetDecision(t *testing.T) {
++	stun := func(addr string) tailcfg.Endpoint {
++		return tailcfg.Endpoint{
++			Addr: netip.MustParseAddrPort(addr),
++			Type: tailcfg.EndpointSTUN,
++		}
++	}
++	local := func(addr string) tailcfg.Endpoint {
++		return tailcfg.Endpoint{
++			Addr: netip.MustParseAddrPort(addr),
++			Type: tailcfg.EndpointLocal,
++		}
++	}
++
++	c := &Auto{loggedIn: true, haveReceivedMap: true}
++
++	if c.noteSTUNEndpointIPs([]tailcfg.Endpoint{local("192.0.2.10:41641")}) {
++		t.Fatal("local-only endpoints unexpectedly requested a reset")
++	}
++	if c.noteSTUNEndpointIPs([]tailcfg.Endpoint{stun("198.51.100.10:41641")}) {
++		t.Fatal("initial STUN IP unexpectedly requested a reset")
++	}
++	if c.noteSTUNEndpointIPs([]tailcfg.Endpoint{stun("198.51.100.10:51234")}) {
++		t.Fatal("port-only change unexpectedly requested a reset")
++	}
++	if c.noteSTUNEndpointIPs([]tailcfg.Endpoint{stun("[2001:db8::10]:41641")}) {
++		t.Fatal("IPv6-only change unexpectedly requested a reset")
++	}
++	if !c.noteSTUNEndpointIPs([]tailcfg.Endpoint{
++		stun("203.0.113.20:42345"),
++		stun("198.51.100.10:51234"),
++	}) {
++		t.Fatal("new STUN IP did not request a reset")
++	}
++	if c.noteSTUNEndpointIPs([]tailcfg.Endpoint{
++		stun("203.0.113.20:42999"),
++		stun("198.51.100.10:59999"),
++	}) {
++		t.Fatal("known STUN IPs unexpectedly requested another reset")
++	}
++	if c.noteSTUNEndpointIPs([]tailcfg.Endpoint{stun("203.0.113.20:42999")}) {
++		t.Fatal("cached endpoint removal unexpectedly requested a reset")
++	}
++
++	c.haveReceivedMap = false
++	if c.noteSTUNEndpointIPs([]tailcfg.Endpoint{stun("192.0.2.30:41641")}) {
++		t.Fatal("pre-netmap STUN IP change unexpectedly requested a reset")
++	}
++
++	c.haveReceivedMap = true
++	c.paused = true
++	if c.noteSTUNEndpointIPs([]tailcfg.Endpoint{stun("192.0.2.31:41641")}) {
++		t.Fatal("paused client unexpectedly requested a reset")
++	}
++
++	c.paused = false
++	c.closed = true
++	if c.noteSTUNEndpointIPs([]tailcfg.Endpoint{stun("192.0.2.32:41641")}) {
++		t.Fatal("closed client unexpectedly requested a reset")
++	}
++}
++
++type closeTrackingTransport struct {
++	closed atomic.Bool
++}
++
++func (*closeTrackingTransport) RoundTrip(*http.Request) (*http.Response, error) {
++	return nil, errors.New("unexpected RoundTrip")
++}
++
++func (t *closeTrackingTransport) CloseIdleConnections() {
++	t.closed.Store(true)
++}
++
++func TestResetNoiseClient(t *testing.T) {
++	tr := new(closeTrackingTransport)
++	nc := &ts2021.Client{
++		Client: &http.Client{Transport: tr},
++	}
++	d := &Direct{
++		logf:        t.Logf,
++		noiseClient: nc,
++	}
++
++	d.resetNoiseClient()
++
++	if !tr.closed.Load() {
++		t.Fatal("old Noise transport was not closed")
++	}
++	if d.noiseClient != nil {
++		t.Fatal("old Noise client was retained")
++	}
++}
++
++func TestUpdateEndpointsResetsControlTransportForNewSTUNIPv4(t *testing.T) {
++	stun := func(addr string) tailcfg.Endpoint {
++		return tailcfg.Endpoint{
++			Addr: netip.MustParseAddrPort(addr),
++			Type: tailcfg.EndpointSTUN,
++		}
++	}
++
++	tr := new(closeTrackingTransport)
++	nc := &ts2021.Client{
++		Client: &http.Client{Transport: tr},
++	}
++	d := &Direct{
++		logf:        t.Logf,
++		noiseClient: nc,
++	}
++	oldMapCtx, oldMapCancel := context.WithCancel(context.Background())
++	defer oldMapCancel()
++	c := &Auto{
++		direct:          d,
++		logf:            t.Logf,
++		updateCh:        make(chan struct{}, 1),
++		loggedIn:        true,
++		haveReceivedMap: true,
++		mapCtx:          oldMapCtx,
++		mapCancel:       oldMapCancel,
++	}
++
++	c.UpdateEndpoints([]tailcfg.Endpoint{stun("198.51.100.10:41641")})
++	<-c.updateCh
++	c.UpdateEndpoints([]tailcfg.Endpoint{stun("198.51.100.10:51234")})
++	<-c.updateCh
++
++	if tr.closed.Load() {
++		t.Fatal("port-only change closed the control transport")
++	}
++
++	c.UpdateEndpoints([]tailcfg.Endpoint{
++		stun("203.0.113.20:42345"),
++		stun("198.51.100.10:51234"),
++	})
++
++	select {
++	case <-oldMapCtx.Done():
++	default:
++		t.Fatal("old map context was not canceled")
++	}
++	select {
++	case <-c.mapCtx.Done():
++		t.Fatal("replacement map context is already canceled")
++	default:
++	}
++	if !tr.closed.Load() {
++		t.Fatal("old control transport was not closed")
++	}
++	if d.noiseClient != nil {
++		t.Fatal("old Noise client was retained")
++	}
++	if got := len(c.updateCh); got != 1 {
++		t.Fatalf("queued updates = %d, want 1", got)
++	}
++}
++
+ func TestRetryableErrors(t *testing.T) {
+ 	errorTests := []struct {
+ 		err  error
+diff --git a/control/controlclient/direct.go b/control/controlclient/direct.go
+index 6f3393b..6ded8dc 100644
+--- a/control/controlclient/direct.go
++++ b/control/controlclient/direct.go
+@@ -377,6 +377,22 @@ func (c *Direct) Close() error {
+ 	return nil
+ }
+ 
++// resetNoiseClient closes the active Noise connection pool and makes future
++// control requests create a fresh client. It leaves authentication, prefs, and
++// the most recently received network map untouched.
++func (c *Direct) resetNoiseClient() {
++	c.mu.Lock()
++	nc := c.noiseClient
++	c.noiseClient = nil
++	c.mu.Unlock()
++
++	if nc != nil {
++		if err := nc.Close(); err != nil {
++			c.logf("closing stale control transport: %v", err)
++		}
++	}
++}
++
+ // SetHostinfo clones the provided Hostinfo and remembers it for the
+ // next update. It reports whether the Hostinfo has changed.
+ func (c *Direct) SetHostinfo(hi *tailcfg.Hostinfo) bool {

@@ -1,7 +1,53 @@
+FROM golang:1.26.1-alpine AS tailscale-wanfix-builder
+
+ARG TAILSCALE_COMMIT="41cb72f27119f95b859335f3ffc3434d6ca55e23"
+ARG TAILSCALE_VERSION_LONG="1.96.4-t41cb72f27-hivewan1"
+ARG TAILSCALE_VERSION_SHORT="1.96.4"
+
+RUN apk add --no-cache ca-certificates git
+
+WORKDIR /src
+RUN \
+    git clone --branch v1.96.4 --depth 1 \
+        https://github.com/tailscale/tailscale.git tailscale \
+    && test "$(git -C tailscale rev-parse HEAD)" = "${TAILSCALE_COMMIT}"
+
+COPY patches/tailscale-1.96.4-wan-control-reset.patch /tmp/tailscale-wan-control-reset.patch
+
+WORKDIR /src/tailscale
+RUN \
+    git apply --check /tmp/tailscale-wan-control-reset.patch \
+    && git apply /tmp/tailscale-wan-control-reset.patch \
+    && CGO_ENABLED=0 go test ./control/controlclient ./control/ts2021 \
+    && mkdir -p /out \
+    && CGO_ENABLED=0 go build \
+        -trimpath \
+        -ldflags="\
+            -X tailscale.com/version.longStamp=${TAILSCALE_VERSION_LONG} \
+            -X tailscale.com/version.shortStamp=${TAILSCALE_VERSION_SHORT} \
+            -X tailscale.com/version.gitCommitStamp=${TAILSCALE_COMMIT}" \
+        -o /out/tailscaled \
+        ./cmd/tailscaled \
+    && CGO_ENABLED=0 go build \
+        -trimpath \
+        -ldflags="\
+            -X tailscale.com/version.longStamp=${TAILSCALE_VERSION_LONG} \
+            -X tailscale.com/version.shortStamp=${TAILSCALE_VERSION_SHORT} \
+            -X tailscale.com/version.gitCommitStamp=${TAILSCALE_COMMIT}" \
+        -o /out/tailscale \
+        ./cmd/tailscale
+
 FROM ghcr.io/hassio-addons/tailscale:0.28.1
 
 # Set shell
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# Replace only the Tailscale executables; retain the exact official add-on
+# runtime, services, configuration, and persistent data paths.
+ARG TAILSCALE_VERSION_LONG="1.96.4-t41cb72f27-hivewan1"
+COPY --from=tailscale-wanfix-builder /out/tailscale /opt/tailscale
+COPY --from=tailscale-wanfix-builder /out/tailscaled /opt/tailscaled
+RUN /opt/tailscale version | grep -Fq "${TAILSCALE_VERSION_LONG}"
 
 # Overlay only the diagnostic changes onto the exact official 0.28.1 runtime.
 COPY rootfs/etc/s6-overlay/scripts/stage2_hook.sh /etc/s6-overlay/scripts/stage2_hook.sh
