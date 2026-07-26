@@ -20,6 +20,7 @@ readonly HEALTHCHECK_RESTART_TIMEOUT=3600  # 1 hour
 
 declare status_json
 declare backend_state is_self_online
+declare health_result="healthy" health_reason="ok"
 # STARTED_TIMESTAMP is in contenv at /var/run/s6/container_environment
 # LAST_ONLINE_TIMESTAMP is in contenv at /var/run/s6/container_environment
 
@@ -40,12 +41,31 @@ then
   printf "${LAST_ONLINE_TIMESTAMP}" > /var/run/s6/container_environment/LAST_ONLINE_TIMESTAMP
 fi
 
-if [[ "${backend_state-}" == "Stopped" ]] || \
-  (bashio::var.has_value "${LAST_ONLINE_TIMESTAMP-}" && \
-    (( $(date +"%s") - ${LAST_ONLINE_TIMESTAMP} > ${HEALTHCHECK_OFFLINE_TIMEOUT} )) ) || \
-  (! bashio::var.has_value "${LAST_ONLINE_TIMESTAMP-}" && \
-    (( $(date +"%s") - ${STARTED_TIMESTAMP} > ${HEALTHCHECK_RESTART_TIMEOUT} )) )
-then
+if [[ "${backend_state-}" == "Stopped" ]]; then
+  health_result="unhealthy"
+  health_reason="backend_stopped"
+elif bashio::var.has_value "${LAST_ONLINE_TIMESTAMP-}" && \
+  (( $(date +"%s") - ${LAST_ONLINE_TIMESTAMP} > ${HEALTHCHECK_OFFLINE_TIMEOUT} )); then
+  health_result="unhealthy"
+  health_reason="offline_timeout"
+elif ! bashio::var.has_value "${LAST_ONLINE_TIMESTAMP-}" && \
+  (( $(date +"%s") - ${STARTED_TIMESTAMP} > ${HEALTHCHECK_RESTART_TIMEOUT} )); then
+  health_result="unhealthy"
+  health_reason="startup_timeout"
+fi
+
+if bashio::config.true "diagnostic_capture"; then
+  tailscale-diagnostic-health-event \
+    "${backend_state-unknown}" \
+    "${is_self_online-false}" \
+    "${health_result}" \
+    "${health_reason}" \
+    "${STARTED_TIMESTAMP-}" \
+    "${LAST_ONLINE_TIMESTAMP-}" \
+    || true
+fi
+
+if [[ "${health_result}" == "unhealthy" ]]; then
   # Unhealthy
   bashio::exit.nok
 fi

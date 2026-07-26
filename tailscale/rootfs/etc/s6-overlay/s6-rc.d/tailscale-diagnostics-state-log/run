@@ -1,0 +1,3 @@
+#!/command/with-contenv sh
+export S6_LOGGING_SCRIPT='n4 s262144 S1048576 T'
+exec logutil-service /data/diagnostics/state

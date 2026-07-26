@@ -1,0 +1,11 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+export LOG_FD
+
+while ! bashio::fs.socket_exists "/var/run/tailscale/tailscaled.sock"; do
+  sleep 1
+done
+
+set -o pipefail
+/opt/tailscale debug daemon-logs --verbose=1 --time 2>&1 \
+  | tailscale-diagnostic-sanitize

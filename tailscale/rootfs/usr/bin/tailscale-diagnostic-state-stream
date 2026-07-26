@@ -1,0 +1,101 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+export LOG_FD
+
+readonly POLL_SECONDS=10
+readonly HEARTBEAT_SECONDS=60
+
+declare status_json snapshot signature state_signature last_signature=""
+declare backend_state online_json health_json
+declare now last_emit=0 last_online_timestamp started_timestamp
+declare last_online_age_json started_age_json
+declare status_ok_json ha_tcp_ok_json socket_ok_json
+declare default_interface
+
+while true; do
+  now=$(date +"%s")
+  status_ok_json=false
+  socket_ok_json=false
+  backend_state="unknown"
+  online_json=null
+  health_json='[]'
+
+  if bashio::fs.socket_exists "/var/run/tailscale/tailscaled.sock"; then
+    socket_ok_json=true
+  fi
+
+  if status_json=$(timeout 5 /opt/tailscale status --json --self=true --peers=false 2> /dev/null); then
+    status_ok_json=true
+    backend_state=$(jq -r '.BackendState // "unknown"' <<< "${status_json}")
+    online_json=$(jq -c 'if (.Self? | type) == "object" and (.Self | has("Online")) then .Self.Online else null end' <<< "${status_json}")
+    health_json=$(jq -c 'if (.Health? | type) == "array" then [.Health[] | tostring] else [] end' <<< "${status_json}" \
+      | tailscale-diagnostic-sanitize)
+  fi
+
+  if timeout 3 bash -c "</dev/tcp/127.0.0.1/$(bashio::core.port)" 2> /dev/null; then
+    ha_tcp_ok_json=true
+  else
+    ha_tcp_ok_json=false
+  fi
+
+  default_interface=$(ip -j route show default 2> /dev/null \
+    | jq -r '.[0].dev // "unknown"' 2> /dev/null \
+    || printf 'unknown')
+
+  last_online_age_json=null
+  if [[ -r /var/run/s6/container_environment/LAST_ONLINE_TIMESTAMP ]]; then
+    last_online_timestamp=$(< /var/run/s6/container_environment/LAST_ONLINE_TIMESTAMP)
+    if [[ "${last_online_timestamp}" =~ ^[0-9]+$ ]]; then
+      last_online_age_json=$((now - last_online_timestamp))
+    fi
+  fi
+
+  started_age_json=null
+  if [[ -r /var/run/s6/container_environment/STARTED_TIMESTAMP ]]; then
+    started_timestamp=$(< /var/run/s6/container_environment/STARTED_TIMESTAMP)
+    if [[ "${started_timestamp}" =~ ^[0-9]+$ ]]; then
+      started_age_json=$((now - started_timestamp))
+    fi
+  fi
+
+  state_signature=$(jq -cn \
+    --arg backend_state "${backend_state}" \
+    --arg default_interface "${default_interface}" \
+    --argjson status_ok "${status_ok_json}" \
+    --argjson socket_ok "${socket_ok_json}" \
+    --argjson self_online "${online_json}" \
+    --argjson health "${health_json}" \
+    --argjson ha_tcp_ok "${ha_tcp_ok_json}" \
+    '{
+      status_ok: $status_ok,
+      socket_ok: $socket_ok,
+      backend_state: $backend_state,
+      self_online: $self_online,
+      health: $health,
+      ha_tcp_ok: $ha_tcp_ok,
+      default_interface: $default_interface
+    }')
+
+  signature=$(jq -cn \
+    --argjson state "${state_signature}" \
+    --argjson last_online_age_seconds "${last_online_age_json}" \
+    --argjson started_age_seconds "${started_age_json}" \
+    '$state + {
+      last_online_age_seconds: $last_online_age_seconds,
+      started_age_seconds: $started_age_seconds
+    }')
+
+  if [[ "${state_signature}" != "${last_signature}" ]] || \
+    ((now - last_emit >= HEARTBEAT_SECONDS));
+  then
+    snapshot=$(jq -cn \
+      --arg timestamp "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+      --argjson state "${signature}" \
+      '{timestamp: $timestamp, event: "state", state: $state}')
+    printf '%s\n' "${snapshot}"
+    last_signature="${state_signature}"
+    last_emit="${now}"
+  fi
+
+  sleep "${POLL_SECONDS}"
+done

@@ -1,0 +1,20 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+export LOG_FD
+
+mkdir -p \
+  /data/diagnostics \
+  /data/diagnostics/daemon \
+  /data/diagnostics/state \
+  /data/diagnostics/health
+
+chown root:nogroup /data/diagnostics /data/diagnostics/health
+chown -R root:nogroup /data/diagnostics/daemon /data/diagnostics/state
+chmod 0711 /data/diagnostics
+chmod 0700 \
+  /data/diagnostics/daemon \
+  /data/diagnostics/state \
+  /data/diagnostics/health
+chown -R nobody:nogroup /data/diagnostics/daemon /data/diagnostics/state
+
+bashio::log.info "Persistent WAN diagnostic capture is enabled"

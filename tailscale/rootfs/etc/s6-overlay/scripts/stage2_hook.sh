@@ -129,6 +129,12 @@ if bashio::config.false 'taildrop'; then
     rm /etc/s6-overlay/s6-rc.d/user/contents.d/taildrop
 fi
 
+# Disable the diagnostic capture pipelines unless explicitly enabled.
+if bashio::config.false 'diagnostic_capture'; then
+    rm /etc/s6-overlay/s6-rc.d/user/contents.d/tailscale-diagnostics-daemon-pipeline
+    rm /etc/s6-overlay/s6-rc.d/user/contents.d/tailscale-diagnostics-state-pipeline
+fi
+
 # Disable share-homeassistant service when it has been explicitly disabled
 if bashio::config.equals 'share_homeassistant' 'disabled'; then
     rm /etc/s6-overlay/s6-rc.d/user/contents.d/share-homeassistant

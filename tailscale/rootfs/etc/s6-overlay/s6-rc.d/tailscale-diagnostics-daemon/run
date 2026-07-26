@@ -1,0 +1,3 @@
+#!/command/with-contenv bashio
+exec 2>&1
+exec tailscale-diagnostic-daemon-stream

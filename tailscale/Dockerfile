@@ -1,40 +1,39 @@
-ARG BUILD_FROM=ghcr.io/hassio-addons/base/amd64:20.0.2
-# hadolint ignore=DL3006
-FROM ${BUILD_FROM}
+FROM ghcr.io/hassio-addons/tailscale:0.28.1
 
 # Set shell
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Setup base
-ARG BUILD_ARCH=amd64
-ARG TAILSCALE_VERSION="v1.96.4"
-RUN \
-    apk add --no-cache \
-        bind-tools=9.20.22-r0 \
-        dnsmasq=2.91-r0 \
-        ethtool=6.15-r0 \
-        ipcalc=1.0.3-r1 \
-        iproute2=6.17.0-r0 \
-        iptables=1.8.11-r1 \
-        nginx=1.28.3-r0 \
-        coreutils=9.8-r1 \
-        networkmanager=1.54.3-r0 \
-    \
-    && ln -sf /sbin/xtables-nft-multi /sbin/ip6tables \
-    && ln -sf /sbin/xtables-nft-multi /sbin/iptables \
-    \
-    && if [ "${BUILD_ARCH}" = "aarch64" ]; then ARCH="arm64"; fi \
-    && if [ "${BUILD_ARCH}" = "amd64" ]; then ARCH="amd64"; fi \
-    \
-    && curl -L -s \
-        "https://pkgs.tailscale.com/stable/tailscale_${TAILSCALE_VERSION#v}_${ARCH}.tgz" \
-        | tar zxvf - -C /opt/ --strip-components 1 \
-    \
-    && rm -f -r \
-        /opt/systemd
+# Overlay only the diagnostic changes onto the exact official 0.28.1 runtime.
+COPY rootfs/etc/s6-overlay/scripts/stage2_hook.sh /etc/s6-overlay/scripts/stage2_hook.sh
+COPY rootfs/usr/bin/healthcheck /usr/bin/healthcheck
+COPY rootfs/usr/bin/tailscale-diagnostic-daemon-stream /usr/bin/tailscale-diagnostic-daemon-stream
+COPY rootfs/usr/bin/tailscale-diagnostic-health-event /usr/bin/tailscale-diagnostic-health-event
+COPY rootfs/usr/bin/tailscale-diagnostic-sanitize /usr/bin/tailscale-diagnostic-sanitize
+COPY rootfs/usr/bin/tailscale-diagnostic-state-stream /usr/bin/tailscale-diagnostic-state-stream
+COPY rootfs/usr/bin/tailscale-diagnostics-prepare /usr/bin/tailscale-diagnostics-prepare
+COPY rootfs/usr/bin/tailscale-diagnostics-seed /usr/bin/tailscale-diagnostics-seed
+COPY rootfs/etc/s6-overlay/s6-rc.d/tailscale-diagnostics-daemon /etc/s6-overlay/s6-rc.d/tailscale-diagnostics-daemon
+COPY rootfs/etc/s6-overlay/s6-rc.d/tailscale-diagnostics-daemon-log /etc/s6-overlay/s6-rc.d/tailscale-diagnostics-daemon-log
+COPY rootfs/etc/s6-overlay/s6-rc.d/tailscale-diagnostics-prepare /etc/s6-overlay/s6-rc.d/tailscale-diagnostics-prepare
+COPY rootfs/etc/s6-overlay/s6-rc.d/tailscale-diagnostics-seed /etc/s6-overlay/s6-rc.d/tailscale-diagnostics-seed
+COPY rootfs/etc/s6-overlay/s6-rc.d/tailscale-diagnostics-state /etc/s6-overlay/s6-rc.d/tailscale-diagnostics-state
+COPY rootfs/etc/s6-overlay/s6-rc.d/tailscale-diagnostics-state-log /etc/s6-overlay/s6-rc.d/tailscale-diagnostics-state-log
+COPY rootfs/etc/s6-overlay/s6-rc.d/tailscaled/dependencies.d/tailscale-diagnostics-seed /etc/s6-overlay/s6-rc.d/tailscaled/dependencies.d/tailscale-diagnostics-seed
+COPY rootfs/etc/s6-overlay/s6-rc.d/user/contents.d/tailscale-diagnostics-daemon-pipeline /etc/s6-overlay/s6-rc.d/user/contents.d/tailscale-diagnostics-daemon-pipeline
+COPY rootfs/etc/s6-overlay/s6-rc.d/user/contents.d/tailscale-diagnostics-state-pipeline /etc/s6-overlay/s6-rc.d/user/contents.d/tailscale-diagnostics-state-pipeline
 
-# Copy root filesystem
-COPY rootfs /
+# Local app development commonly copies the build context through a file share,
+# which does not preserve Unix executable bits.
+RUN \
+    chmod +x \
+        /usr/bin/healthcheck \
+        /usr/bin/tailscale-diagnostic-* \
+        /usr/bin/tailscale-diagnostics-* \
+        /etc/s6-overlay/scripts/stage2_hook.sh \
+    && find /etc/s6-overlay/s6-rc.d/tailscale-diagnostics-* \
+        -type f \
+        \( -name run -o -name finish \) \
+        -exec chmod +x {} +
 
 HEALTHCHECK \
     CMD healthcheck

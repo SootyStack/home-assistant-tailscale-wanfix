@@ -1,0 +1,65 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+export LOG_FD
+
+readonly LOG_DIRECTORY="/data/diagnostics/health"
+readonly LOG_FILE="${LOG_DIRECTORY}/healthcheck.jsonl"
+readonly MAX_BYTES=524288
+readonly MAX_ARCHIVES=4
+
+declare backend_state="${1-unknown}"
+declare self_online="${2-false}"
+declare result="${3-unknown}"
+declare reason="${4-unknown}"
+declare started_timestamp="${5-}"
+declare last_online_timestamp="${6-}"
+declare now started_age_json=null last_online_age_json=null record
+
+now=$(date +"%s")
+
+if [[ "${started_timestamp}" =~ ^[0-9]+$ ]]; then
+  started_age_json=$((now - started_timestamp))
+fi
+if [[ "${last_online_timestamp}" =~ ^[0-9]+$ ]]; then
+  last_online_age_json=$((now - last_online_timestamp))
+fi
+if [[ "${self_online}" != "true" && "${self_online}" != "false" ]]; then
+  self_online=false
+fi
+
+mkdir -p "${LOG_DIRECTORY}"
+chown root:nogroup "/data/diagnostics" 2> /dev/null || true
+chmod 0711 "/data/diagnostics" 2> /dev/null || true
+chmod 0700 "${LOG_DIRECTORY}" 2> /dev/null || true
+
+if [[ -f "${LOG_FILE}" ]] && \
+  (( $(stat -c '%s' "${LOG_FILE}" 2> /dev/null || printf '0') >= MAX_BYTES ));
+then
+  for ((index=MAX_ARCHIVES; index >= 2; index--)); do
+    if [[ -f "${LOG_FILE}.$((index - 1))" ]]; then
+      mv -f "${LOG_FILE}.$((index - 1))" "${LOG_FILE}.${index}"
+    fi
+  done
+  mv -f "${LOG_FILE}" "${LOG_FILE}.1"
+fi
+
+record=$(jq -cn \
+  --arg timestamp "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+  --arg backend_state "${backend_state}" \
+  --arg result "${result}" \
+  --arg reason "${reason}" \
+  --argjson self_online "${self_online}" \
+  --argjson started_age_seconds "${started_age_json}" \
+  --argjson last_online_age_seconds "${last_online_age_json}" \
+  '{
+    timestamp: $timestamp,
+    event: "healthcheck",
+    backend_state: $backend_state,
+    self_online: $self_online,
+    result: $result,
+    reason: $reason,
+    started_age_seconds: $started_age_seconds,
+    last_online_age_seconds: $last_online_age_seconds
+  }')
+
+printf '%s\n' "${record}" >> "${LOG_FILE}"

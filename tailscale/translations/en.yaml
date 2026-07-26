@@ -40,6 +40,18 @@ configuration:
       When enabled forces all peer communication over DERP by disabling the use of
       UDP.
       This option is disabled by default.
+  diagnostic_capture:
+    name: Capture WAN diagnostics
+    description: >-
+      Records bounded, sanitized Tailscale daemon and health-state diagnostics
+      in persistent app storage for controlled WAN failover testing.
+      This option does not change recovery behavior and is disabled by default.
+  diagnostic_seed_backup:
+    name: One-time state seed backup
+    description: >-
+      Imports the existing Tailscale identity from an unprotected,
+      Tailscale-only Supervisor backup before the diagnostic daemon starts.
+      Leave empty after the first successful start.
   exit_node:
     name: Use exit node
     description: >-

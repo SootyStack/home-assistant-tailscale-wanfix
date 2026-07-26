@@ -1,0 +1,3 @@
+#!/command/with-contenv sh
+export S6_LOGGING_SCRIPT='n8 s2097152 S16777216 T'
+exec logutil-service /data/diagnostics/daemon

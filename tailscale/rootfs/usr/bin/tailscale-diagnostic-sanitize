@@ -1,0 +1,10 @@
+#!/usr/bin/env sh
+# Keep transport details useful for correlation while removing credentials and
+# identity material that should never be written to a diagnostic archive.
+exec stdbuf -oL sed -E \
+  -e 's#https://login[.]tailscale[.]com/a/[A-Za-z0-9_-]+#<redacted-auth-url>#g' \
+  -e 's#tskey-[A-Za-z0-9-]+#<redacted-tskey>#g' \
+  -e 's#(nodekey|machinekey|disco|privkey):[A-Za-z0-9+/=_-]+#<redacted-key>#g' \
+  -e 's#Bearer[[:space:]]+[A-Za-z0-9._~+/-]+#Bearer <redacted>#gi' \
+  -e 's#[?&](auth|token|key)=[^&[:space:]]+#<redacted-query-secret>#gi' \
+  -e 's#[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+[.][A-Za-z][A-Za-z]+#<redacted-email>#g'
