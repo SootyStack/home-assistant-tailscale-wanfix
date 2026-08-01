@@ -14,6 +14,7 @@ declare reason="${4-unknown}"
 declare started_timestamp="${5-}"
 declare last_online_timestamp="${6-}"
 declare now started_age_json=null last_online_age_json=null record
+declare last_record="" previous_result="" previous_reason=""
 
 now=$(date +"%s")
 
@@ -31,6 +32,25 @@ mkdir -p "${LOG_DIRECTORY}"
 chown root:nogroup "/data/diagnostics" 2> /dev/null || true
 chmod 0711 "/data/diagnostics" 2> /dev/null || true
 chmod 0700 "${LOG_DIRECTORY}" 2> /dev/null || true
+
+# The state stream already records changing context. Keep this health log to
+# result/reason transitions so periodic Supervisor checks do not repeat the
+# same record indefinitely.
+if [[ -s "${LOG_FILE}" ]]; then
+  last_record=$(tail -n 1 "${LOG_FILE}" 2> /dev/null || true)
+  previous_result=$(jq -r \
+    'if (.result? | type) == "string" then .result else "" end' \
+    <<< "${last_record}" 2> /dev/null || true)
+  previous_reason=$(jq -r \
+    'if (.reason? | type) == "string" then .reason else "" end' \
+    <<< "${last_record}" 2> /dev/null || true)
+fi
+
+if [[ "${result}" == "${previous_result}" ]] && \
+  [[ "${reason}" == "${previous_reason}" ]];
+then
+  exit 0
+fi
 
 if [[ -f "${LOG_FILE}" ]] && \
   (( $(stat -c '%s' "${LOG_FILE}" 2> /dev/null || printf '0') >= MAX_BYTES ));

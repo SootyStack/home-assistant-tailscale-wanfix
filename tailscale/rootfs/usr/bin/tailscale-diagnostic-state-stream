@@ -3,11 +3,10 @@
 export LOG_FD
 
 readonly POLL_SECONDS=10
-readonly HEARTBEAT_SECONDS=60
 
 declare status_json snapshot signature state_signature last_signature=""
 declare backend_state online_json health_json
-declare now last_emit=0 last_online_timestamp started_timestamp
+declare now last_online_timestamp started_timestamp
 declare last_online_age_json started_age_json
 declare status_ok_json ha_tcp_ok_json socket_ok_json
 declare default_interface
@@ -85,16 +84,15 @@ while true; do
       started_age_seconds: $started_age_seconds
     }')
 
-  if [[ "${state_signature}" != "${last_signature}" ]] || \
-    ((now - last_emit >= HEARTBEAT_SECONDS));
-  then
+  # Emit the initial observation and subsequent state changes. Advancing age
+  # counters alone do not justify a persistent heartbeat record.
+  if [[ "${state_signature}" != "${last_signature}" ]]; then
     snapshot=$(jq -cn \
       --arg timestamp "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
       --argjson state "${signature}" \
       '{timestamp: $timestamp, event: "state", state: $state}')
     printf '%s\n' "${snapshot}"
     last_signature="${state_signature}"
-    last_emit="${now}"
   fi
 
   sleep "${POLL_SECONDS}"
