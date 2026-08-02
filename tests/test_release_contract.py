@@ -31,8 +31,14 @@ class ReleaseContractTests(unittest.TestCase):
         )
 
         lookups = {
-            "status": "locally_validated_not_published",
+            "status": "published_verified_not_installed",
             "release.custom_version": "0.28.1-wanfix.3",
+            "release.publication.source_commit": (
+                "f462f6c3dae3eb27809a484b4d24f94cb12e9514"
+            ),
+            "release.publication.image_index_digest": (
+                "sha256:8cfd8512dc76baa0193367103dcc305910e361eb556579149fbf33abb053397b"
+            ),
             "upstream.app.runtime_image": (
                 "ghcr.io/hassio-addons/tailscale:0.28.1"
             ),
@@ -44,8 +50,8 @@ class ReleaseContractTests(unittest.TestCase):
                 "sha256:2389ebfa5b7f43eeafbd6be0c3700cc46690ef842ad962f6c5bd6be49ed82039"
             ),
             "build.base_images_digest_pinned": "true",
-            "verification.anonymous_pull_verified": "false",
-            "verification.signature_verified": "false",
+            "verification.anonymous_pull_verified": "true",
+            "verification.signature_verified": "true",
             "source.candidate_commit": (
                 "d6b6ffd28711c40f83b2bd62d9c8b97f2aaaa2e3"
             ),
@@ -193,8 +199,6 @@ class ReleaseContractTests(unittest.TestCase):
                 release_contract.validate_repository(clone)
 
     def test_malformed_published_image_digest_fails(self) -> None:
-        if "publication" not in release_contract.load_manifest(ROOT)["release"]:
-            self.skipTest("current checkout is an unpublished candidate")
         with tempfile.TemporaryDirectory(prefix="release-contract-") as temporary:
             clone = Path(temporary) / "repository"
             shutil.copytree(

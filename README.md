@@ -11,9 +11,9 @@ Tailscale, or Home Assistant Community Apps release.
 
 ## Current release state
 
-Version `0.28.1-wanfix.2`, based on official app `v0.28.1`, is published as a
+Version `0.28.1-wanfix.3`, based on official app `v0.28.1`, is published as a
 public, signed multi-architecture image. Its immutable index digest is
-`sha256:6919d56700aac518b21f94dea414d301f895233b54a728ce298c95ca67539d79`.
+`sha256:8cfd8512dc76baa0193367103dcc305910e361eb556579149fbf33abb053397b`.
 Anonymous pulls, platform mapping, source labels, certificate identity, and
 transparency-log inclusion have been verified.
 

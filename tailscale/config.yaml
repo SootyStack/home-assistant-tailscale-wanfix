@@ -5,7 +5,7 @@ slug: tailscale
 description: Tailscale with reviewed WAN recovery diagnostics
 url: https://github.com/SootyStack/home-assistant-tailscale-wanfix
 image: ghcr.io/sootystack/tailscale-wanfix
-stage: experimental
+stage: stable
 ingress: true
 ingress_port: 0
 ingress_stream: true
