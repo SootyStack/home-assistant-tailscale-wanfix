@@ -1,0 +1,169 @@
+---
+name: Record upstream Tailscale app release
+
+# Intake records official release metadata only. It does not apply upstream
+# source, remove the WAN fix, merge a PR, or publish an image.
+# yamllint disable-line rule:truthy
+on:
+  schedule:
+    - cron: "17 11 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: upstream-intake
+  cancel-in-progress: false
+
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+
+jobs:
+  intake:
+    name: Create an idempotent draft descriptor PR
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Check out main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: true
+          ref: main
+
+      - name: Fetch the official latest-release descriptor
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+
+          curl \
+            --fail-with-body \
+            --location \
+            --retry 3 \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "${GITHUB_API_URL}/repos/hassio-addons/app-tailscale/releases/latest" \
+            --output "${RUNNER_TEMP}/upstream-release.json"
+
+      - name: Build the deterministic intake descriptor
+        id: descriptor
+        shell: bash
+        run: >-
+          python3 scripts/upstream_intake.py
+          --root .
+          --release-json "${RUNNER_TEMP}/upstream-release.json"
+
+      - name: Validate the proposed descriptor-only change
+        if: steps.descriptor.outputs.changed == 'true'
+        id: proposal
+        shell: bash
+        env:
+          BRANCH_NAME: ${{ steps.descriptor.outputs.branch_name }}
+          DESCRIPTOR_PATH: ${{ steps.descriptor.outputs.descriptor_path }}
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_VERSION: ${{ steps.descriptor.outputs.upstream_version }}
+        run: |
+          set -Eeuo pipefail
+
+          [[ "${BRANCH_NAME}" =~ ^automation/upstream-[A-Za-z0-9._-]+$ ]] || {
+            echo "The intake script returned an unsafe branch name." >&2
+            exit 1
+          }
+          [[ "${DESCRIPTOR_PATH}" =~ ^upstream-candidates/v[0-9]+\.[0-9]+\.[0-9]+\.json$ ]] || {
+            echo "The intake script returned an unexpected descriptor path." >&2
+            exit 1
+          }
+          [[ "${UPSTREAM_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "The intake script returned an invalid upstream version." >&2
+            exit 1
+          }
+
+          mapfile -d '' changed_files < <(
+            git ls-files --modified --deleted --others --exclude-standard -z
+          )
+          if (( ${#changed_files[@]} != 1 )) \
+            || [[ "${changed_files[0]}" != "${DESCRIPTOR_PATH}" ]]; then
+            echo "Intake may change only its deterministic descriptor file." >&2
+            printf 'Changed path: %s\n' "${changed_files[@]}" >&2
+            exit 1
+          fi
+
+          if git ls-remote --exit-code --heads origin "refs/heads/${BRANCH_NAME}" > /dev/null 2>&1; then
+            existing_pr="$(
+              gh pr list \
+                --repo "${GITHUB_REPOSITORY}" \
+                --head "${BRANCH_NAME}" \
+                --state open \
+                --json number \
+                --jq '.[0].number // empty'
+            )"
+            if [[ -n "${existing_pr}" ]]; then
+              echo "Draft intake PR #${existing_pr} already exists; no duplicate will be created."
+              echo "skip=true" >> "${GITHUB_OUTPUT}"
+              exit 0
+            fi
+
+            echo "The deterministic branch exists without an open PR; refusing to overwrite it." >&2
+            exit 1
+          fi
+
+          echo "skip=false" >> "${GITHUB_OUTPUT}"
+
+      - name: Commit the descriptor on its deterministic branch
+        if: >-
+          steps.descriptor.outputs.changed == 'true'
+          && steps.proposal.outputs.skip != 'true'
+        shell: bash
+        env:
+          BRANCH_NAME: ${{ steps.descriptor.outputs.branch_name }}
+          DESCRIPTOR_PATH: ${{ steps.descriptor.outputs.descriptor_path }}
+          UPSTREAM_VERSION: ${{ steps.descriptor.outputs.upstream_version }}
+        run: |
+          set -Eeuo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch --create "${BRANCH_NAME}"
+          git add -- "${DESCRIPTOR_PATH}"
+
+          mapfile -t staged_files < <(git diff --cached --name-only)
+          if (( ${#staged_files[@]} != 1 )) \
+            || [[ "${staged_files[0]}" != "${DESCRIPTOR_PATH}" ]]; then
+            echo "Refusing to commit anything except ${DESCRIPTOR_PATH}." >&2
+            exit 1
+          fi
+
+          git commit --message "chore: record upstream ${UPSTREAM_VERSION}"
+          git push origin "HEAD:refs/heads/${BRANCH_NAME}"
+
+      - name: Open the descriptor PR in draft state
+        if: >-
+          steps.descriptor.outputs.changed == 'true'
+          && steps.proposal.outputs.skip != 'true'
+        shell: bash
+        env:
+          BRANCH_NAME: ${{ steps.descriptor.outputs.branch_name }}
+          GH_TOKEN: ${{ github.token }}
+          PR_BODY: ${{ steps.descriptor.outputs.pr_body }}
+          PR_TITLE: ${{ steps.descriptor.outputs.pr_title }}
+        run: |
+          set -Eeuo pipefail
+
+          printf '%s\n' "${PR_BODY}" > "${RUNNER_TEMP}/upstream-pr-body.md"
+          printf '%s\n' \
+            '' \
+            'This automation records metadata only. It does not merge, publish, apply upstream source, or remove the WAN fix.' \
+            >> "${RUNNER_TEMP}/upstream-pr-body.md"
+
+          gh pr create \
+            --repo "${GITHUB_REPOSITORY}" \
+            --base main \
+            --head "${BRANCH_NAME}" \
+            --title "${PR_TITLE}" \
+            --body-file "${RUNNER_TEMP}/upstream-pr-body.md" \
+            --draft

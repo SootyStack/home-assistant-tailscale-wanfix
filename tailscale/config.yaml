@@ -2,8 +2,10 @@
 name: Tailscale WAN Diagnostics
 version: 0.28.1-wanfix.2
 slug: tailscale
-description: Zero config VPN for building secure networks
-url: https://github.com/hassio-addons/app-tailscale
+description: Tailscale with reviewed WAN recovery diagnostics
+url: https://github.com/SootyStack/home-assistant-tailscale-wanfix
+image: ghcr.io/sootystack/tailscale-wanfix
+stage: experimental
 ingress: true
 ingress_port: 0
 ingress_stream: true

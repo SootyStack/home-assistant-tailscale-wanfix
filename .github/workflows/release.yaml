@@ -1,0 +1,260 @@
+---
+name: Publish managed Tailscale app
+
+# Publishing is deliberately manual. The protected ghcr-publish environment is
+# the final owner-controlled approval boundary.
+# yamllint disable-line rule:truthy
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact managed version from tailscale/config.yaml
+        required: true
+        type: string
+      source_sha:
+        description: Exact 40-character SHA at the head of the reviewed PR
+        required: true
+        type: string
+      pull_request:
+        description: Open, non-draft PR number whose head is source_sha
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
+
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+  REGISTRY_PREFIX: ghcr.io/sootystack
+  IMAGE_NAME: tailscale-wanfix
+
+jobs:
+  preflight:
+    name: Verify version, source SHA, and PR
+    runs-on: ubuntu-24.04
+    permissions:
+      checks: read
+      contents: read
+      packages: read
+      pull-requests: read
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Validate dispatch inputs
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          PULL_REQUEST: ${{ inputs.pull_request }}
+        run: |
+          set -Eeuo pipefail
+
+          [[ "${RELEASE_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+-wanfix\.[0-9]+$ ]] || {
+            echo "version must use the X.Y.Z-wanfix.N form" >&2
+            exit 1
+          }
+          [[ "${SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "source_sha must be an exact lowercase 40-character commit SHA" >&2
+            exit 1
+          }
+          [[ "${PULL_REQUEST}" =~ ^[1-9][0-9]*$ ]] || {
+            echo "pull_request must be a positive PR number" >&2
+            exit 1
+          }
+
+      - name: Verify the PR identifies the exact candidate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PULL_REQUEST: ${{ inputs.pull_request }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -Eeuo pipefail
+
+          curl \
+            --fail-with-body \
+            --location \
+            --retry 3 \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/pulls/${PULL_REQUEST}" \
+            --output "${RUNNER_TEMP}/pull-request.json"
+
+          jq --exit-status \
+            --arg source_sha "${SOURCE_SHA}" \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            '(.state == "open")
+             and (.draft == false)
+             and (.base.ref == "main")
+             and (.head.sha == $source_sha)
+             and (.head.repo.full_name == $repository)' \
+            "${RUNNER_TEMP}/pull-request.json" > /dev/null || {
+              echo "PR must be open, non-draft, based on main, and point to the exact in-repository source SHA." >&2
+              exit 1
+            }
+
+      - name: Check out the exact candidate SHA
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ inputs.source_sha }}
+
+      - name: Validate the release contract
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: >-
+          python3 scripts/release_contract.py
+          --root .
+          validate
+          --version "${RELEASE_VERSION}"
+          --source-sha "${SOURCE_SHA}"
+
+      - name: Verify required validation checks
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -Eeuo pipefail
+
+          curl \
+            --fail-with-body \
+            --location \
+            --retry 3 \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/commits/${SOURCE_SHA}/check-runs?per_page=100" \
+            --output "${RUNNER_TEMP}/check-runs.json"
+
+          required_checks=(
+            "Source contract, tests, and shell checks"
+            "Build amd64"
+            "Build aarch64"
+          )
+
+          for check_name in "${required_checks[@]}"; do
+            jq --exit-status \
+              --arg check_name "${check_name}" \
+              '[.check_runs[]
+                | select(
+                    (.name == $check_name)
+                    and (.status == "completed")
+                    and (.conclusion == "success")
+                  )]
+               | length > 0' \
+              "${RUNNER_TEMP}/check-runs.json" > /dev/null || {
+                echo "Required successful check is missing: ${check_name}" >&2
+                exit 1
+              }
+          done
+
+      - name: Verify immutable image tags are unused
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -Eeuo pipefail
+
+          echo "${GH_TOKEN}" \
+            | docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+
+          image_references=(
+            "${REGISTRY_PREFIX}/${IMAGE_NAME}:${RELEASE_VERSION}"
+            "${REGISTRY_PREFIX}/amd64-${IMAGE_NAME}:${RELEASE_VERSION}"
+            "${REGISTRY_PREFIX}/aarch64-${IMAGE_NAME}:${RELEASE_VERSION}"
+          )
+
+          for image_reference in "${image_references[@]}"; do
+            if inspect_output="$(docker manifest inspect "${image_reference}" 2>&1)"; then
+              echo "Refusing to overwrite existing immutable tag: ${image_reference}" >&2
+              exit 1
+            fi
+
+            if ! grep -Eiq 'manifest unknown|no such manifest|not found' <<< "${inspect_output}"; then
+              echo "Could not establish that ${image_reference} is unused:" >&2
+              printf '%s\n' "${inspect_output}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Prepare the architecture matrix
+        id: matrix
+        uses: home-assistant/builder/actions/prepare-multi-arch-matrix@4de35182ce1e329181bffcbcc84d33db5e2c7e10 # 2026.06.0
+        with:
+          architectures: '["amd64", "aarch64"]'
+          image-name: tailscale-wanfix
+          registry-prefix: ghcr.io/sootystack
+
+  publish-architecture:
+    name: Publish and sign ${{ matrix.arch }}
+    needs:
+      - preflight
+    runs-on: ${{ matrix.os }}
+    environment:
+      name: ghcr-publish
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.preflight.outputs.matrix) }}
+    steps:
+      - name: Check out the exact candidate SHA
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ inputs.source_sha }}
+
+      - name: Build, publish, and sign the immutable architecture image
+        uses: home-assistant/builder/actions/build-image@4de35182ce1e329181bffcbcc84d33db5e2c7e10 # 2026.06.0
+        with:
+          arch: ${{ matrix.arch }}
+          cache-gha: false
+          container-registry-password: ${{ github.token }}
+          context: ./tailscale
+          image: ${{ matrix.image }}
+          image-tags: ${{ inputs.version }}
+          labels: |
+            io.hass.name=Tailscale WAN Diagnostics
+            io.hass.description=Tailscale with reviewed WAN recovery diagnostics
+            io.hass.type=app
+            io.hass.url=https://github.com/SootyStack/home-assistant-tailscale-wanfix
+            org.opencontainers.image.revision=${{ inputs.source_sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ inputs.version }}
+          push: true
+          version: ${{ inputs.version }}
+
+  publish-manifest:
+    name: Publish and sign multi-architecture manifest
+    needs:
+      - preflight
+      - publish-architecture
+    runs-on: ubuntu-24.04
+    environment:
+      name: ghcr-publish
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    steps:
+      - name: Publish and sign the immutable generic image manifest
+        uses: home-assistant/builder/actions/publish-multi-arch-manifest@4de35182ce1e329181bffcbcc84d33db5e2c7e10 # 2026.06.0
+        with:
+          architectures: '["amd64", "aarch64"]'
+          container-registry-password: ${{ github.token }}
+          image-name: tailscale-wanfix
+          image-tags: ${{ inputs.version }}
+          registry-prefix: ghcr.io/sootystack

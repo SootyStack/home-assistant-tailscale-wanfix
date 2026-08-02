@@ -87,31 +87,20 @@ HEALTHCHECK \
 # S6 Overlay stage 2 hook
 ENV S6_STAGE2_HOOK=/etc/s6-overlay/scripts/stage2_hook.sh
 
-# Build arguments
+# The Home Assistant builder supplies architecture, version, source, revision,
+# and creation labels for published images.
 ARG BUILD_ARCH
-ARG BUILD_DATE
-ARG BUILD_DESCRIPTION
-ARG BUILD_NAME
-ARG BUILD_REF
-ARG BUILD_REPOSITORY
 ARG BUILD_VERSION
 
-# Labels
 LABEL \
-    io.hass.name="${BUILD_NAME}" \
-    io.hass.description="${BUILD_DESCRIPTION}" \
-    io.hass.arch="${BUILD_ARCH}" \
-    io.hass.type="addon" \
-    io.hass.version=${BUILD_VERSION} \
-    maintainer="Franck Nijhof <opensource@frenck.dev>" \
-    org.opencontainers.image.title="${BUILD_NAME}" \
-    org.opencontainers.image.description="${BUILD_DESCRIPTION}" \
-    org.opencontainers.image.vendor="Home Assistant Community Apps" \
-    org.opencontainers.image.authors="Franck Nijhof <opensource@frenck.dev>" \
+    io.hass.name="Tailscale WAN Diagnostics" \
+    io.hass.description="Tailscale with reviewed WAN recovery diagnostics" \
+    io.hass.type="app" \
+    maintainer="SootyStack" \
+    org.opencontainers.image.title="Tailscale WAN Diagnostics" \
+    org.opencontainers.image.description="Tailscale with reviewed WAN recovery diagnostics" \
+    org.opencontainers.image.vendor="SootyStack" \
+    org.opencontainers.image.authors="SootyStack" \
     org.opencontainers.image.licenses="MIT" \
-    org.opencontainers.image.url="https://frenck.dev/home-assistant-apps" \
-    org.opencontainers.image.source="https://github.com/${BUILD_REPOSITORY}" \
-    org.opencontainers.image.documentation="https://github.com/${BUILD_REPOSITORY}/blob/main/README.md" \
-    org.opencontainers.image.created=${BUILD_DATE} \
-    org.opencontainers.image.revision=${BUILD_REF} \
-    org.opencontainers.image.version=${BUILD_VERSION}
+    org.opencontainers.image.url="https://github.com/SootyStack/home-assistant-tailscale-wanfix" \
+    org.opencontainers.image.documentation="https://github.com/SootyStack/home-assistant-tailscale-wanfix/blob/main/tailscale/DOCS.md"

@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "channel": "stable",
+  "status": "locally_validated_not_published",
+  "repository": {
+    "canonical_url": "https://github.com/SootyStack/home-assistant-tailscale-wanfix",
+    "stable_branch": "main",
+    "app_directory": "tailscale",
+    "app_slug": "tailscale"
+  },
+  "release": {
+    "custom_version": "0.28.1-wanfix.2",
+    "image": "ghcr.io/sootystack/tailscale-wanfix",
+    "automatic_install": false,
+    "mutable_tags": false
+  },
+  "upstream": {
+    "app": {
+      "repository": "hassio-addons/app-tailscale",
+      "version": "0.28.1",
+      "tag": "v0.28.1",
+      "commit": "25b151d15b45d9b89dde6af549d96b19ffe6004c",
+      "tree": "e439df9edaadf37bc88d0f8a8ea8e751cb1e2769",
+      "runtime_image": "ghcr.io/hassio-addons/tailscale:0.28.1"
+    },
+    "tailscale": {
+      "repository": "tailscale/tailscale",
+      "version": "1.96.4",
+      "tag": "v1.96.4",
+      "commit": "41cb72f27119f95b859335f3ffc3434d6ca55e23",
+      "patched_tree": "32321a0afc24f584759934d23b3c56a225683e5b"
+    }
+  },
+  "source": {
+    "candidate_commit": "013be1d851711bc3d4aa592d4137c752ea46bae6",
+    "candidate_tree": "a49910000ab5002023c98423af738fd755b5b626",
+    "custom_commits": [
+      "2cb8f7e7b9eec743be431f5626b464a3b4e0e694",
+      "31b3a0f2836c8435a48d30707098260e0b60d628",
+      "013be1d851711bc3d4aa592d4137c752ea46bae6"
+    ]
+  },
+  "patches": [
+    {
+      "path": "tailscale/patches/tailscale-1.96.4-wan-control-reset.patch",
+      "sha256": "d722d5180c200faefe5bd27d85683d5062d29bdfd2be0b8563016cbc2931ad63"
+    }
+  ],
+  "build": {
+    "architectures": [
+      "amd64",
+      "aarch64"
+    ],
+    "builder_action_commit": "4de35182ce1e329181bffcbcc84d33db5e2c7e10",
+    "checkout_action_commit": "3d3c42e5aac5ba805825da76410c181273ba90b1",
+    "base_images_digest_pinned": false,
+    "hermetic": false
+  },
+  "verification": {
+    "source_locally_validated": true,
+    "multi_arch_images_built": false,
+    "published": false,
+    "installed": false,
+    "activated": false,
+    "live_verified": false,
+    "failover_verified": false,
+    "failback_verified": false
+  },
+  "promotion_rule": "Publish and verify the immutable image before merging a stable version advertisement."
+}

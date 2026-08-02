@@ -1,4 +1,10 @@
-# Home Assistant Community App: Tailscale
+# Tailscale WAN Diagnostics
+
+> [!WARNING]
+> This is an independently maintained custom app based on Home Assistant
+> Community Apps Tailscale. It is not an official Home Assistant, Tailscale,
+> or Home Assistant Community Apps release. Do not run it concurrently with
+> another Tailscale app on the same Home Assistant host.
 
 Tailscale is a zero config VPN, which installs on any device in minutes,
 including your Home Assistant instance.
@@ -22,13 +28,16 @@ however, it is nice to know where you need to go later on.
 
 ## Installation
 
-1. Click the Home Assistant My button below to open the app on your Home
-   Assistant instance.
-
-   [![Open this app in your Home Assistant instance.][app-badge]][app]
-
-1. Click the "Install" button to install the app.
-1. Start the "Tailscale" app.
+1. Confirm the version shown in this repository's stable manifest has a
+   matching published immutable image.
+1. In Home Assistant, open **Settings > Apps > App store**, open the repository
+   menu, and add
+   `https://github.com/SootyStack/home-assistant-tailscale-wanfix`.
+1. Select **Tailscale WAN Diagnostics** and click **Install**.
+1. If migrating from a local or official Tailscale app, stop it first and
+   follow the separately validated identity-migration procedure. Repository
+   apps have a different installation identity and do not inherit `/data`.
+1. Start **Tailscale WAN Diagnostics**.
 1. Check the logs of the "Tailscale" app to see if everything went well.
 1. Open the Web UI of the "Tailscale" app to complete authentication and
    couple your Home Assistant instance with your Tailscale account.
@@ -73,6 +82,8 @@ advertise_routes:
   - 192.168.1.0/24
   - fd12:3456:abcd::/64
 always_use_derp: false
+diagnostic_capture: false
+diagnostic_seed_backup: ""
 exit_node: 100.101.102.103
 log_level: info
 login_server: "https://controlplane.tailscale.com"
@@ -181,6 +192,28 @@ you experience that connections to your Home Assistant device regularly freeze
 unresponsive), and you have to reload the web page or force stop the Home
 Assistant app to make them work again. The root cause can be that your ISP
 erroneously drops UDP packets on certain conditions.
+
+### Option: `diagnostic_capture`
+
+Enables additional sanitized WAN diagnostic capture for a bounded
+troubleshooting session. Leave this disabled during normal operation. The
+always-on diagnostic streams record only their initial observation and state or
+health transitions; they do not emit periodic heartbeat lines.
+
+Captured output may still reveal operational network details. Review it before
+sharing, keep it out of source control, and disable this option when the
+diagnostic session is complete.
+
+### Option: `diagnostic_seed_backup`
+
+Provides the eight-character Home Assistant backup slug used for a one-time,
+allowlisted import of an existing Tailscale identity into an empty custom-app
+data directory. Leave this blank for normal installation and operation.
+
+The import refuses to overwrite an existing identity and records a completion
+marker after success. Use it only as part of an explicitly validated migration
+with a current backup and rollback path. Clear the option after the import has
+completed.
 
 ### Option: `exit_node`
 
@@ -462,38 +495,26 @@ Assistant device also, and this device is configured as global nameserver on the
 
 ## Changelog & Releases
 
-This repository keeps a change log using [GitHub's releases][releases]
-functionality.
-
-Releases are based on [Semantic Versioning][semver], and use the format
-of `MAJOR.MINOR.PATCH`. In a nutshell, the version will be incremented
-based on the following:
-
-- `MAJOR`: Incompatible or major changes.
-- `MINOR`: Backwards-compatible new features and enhancements.
-- `PATCH`: Backwards-compatible bugfixes and package updates.
+Changes are recorded in [`CHANGELOG.md`](CHANGELOG.md). Custom versions include
+the official app baseline and a monotonically increasing WAN-fix revision, for
+example `0.28.1-wanfix.2`. The configured version must equal the immutable
+container-image tag. Published tags are not overwritten and no `latest` tag is
+used.
 
 ## Support
 
-Got questions?
-
-You have several options to get them answered:
-
-- The [Home Assistant Community Apps Discord chat server][discord] for app
-  support and feature requests.
-- The [Home Assistant Discord chat server][discord-ha] for general Home
-  Assistant discussions and questions.
-- The Home Assistant [Community Forum][forum].
-- Join the [Reddit subreddit][reddit] in [/r/homeassistant][reddit]
-
-You could also [open an issue here][issue] GitHub.
+Open an issue in this custom repository for reproducible app defects, but do
+not include credentials, authentication URLs, backups, raw logs, packet
+captures, or private network details. Use the upstream project's support and
+security channels for defects in unchanged upstream behavior.
 
 ## Authors & contributors
 
 The original setup of this repository is by [Franck Nijhof][frenck].
 
-For a full list of all authors and contributors,
-check [the contributor's page][contributors].
+The custom WAN recovery and diagnostic changes are maintained by SootyStack.
+Upstream authorship remains available in the
+[official contributor history][contributors].
 
 ## License
 
@@ -519,8 +540,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-[app-badge]: https://my.home-assistant.io/badges/supervisor_addon.svg
-[app]: https://my.home-assistant.io/redirect/supervisor_addon/?addon=a0d7b954_tailscale&repository_url=https%3A%2F%2Fgithub.com%2Fhassio-addons%2Frepository
 [contributors]: https://github.com/hassio-addons/app-tailscale/graphs/contributors
 [discord-ha]: https://www.home-assistant.io/join-chat
 [discord]: https://discord.me/hassioaddons
@@ -528,9 +547,9 @@ SOFTWARE.
 [frenck]: https://github.com/frenck
 [headscale]: https://github.com/juanfont/headscale
 [http_integration]: https://www.home-assistant.io/integrations/http/
-[issue]: https://github.com/hassio-addons/app-tailscale/issues
+[issue]: https://github.com/SootyStack/home-assistant-tailscale-wanfix/issues
 [reddit]: https://reddit.com/r/homeassistant
-[releases]: https://github.com/hassio-addons/app-tailscale/releases
+[releases]: https://github.com/SootyStack/home-assistant-tailscale-wanfix/releases
 [semver]: https://semver.org/spec/v2.0.0.html
 [tailscale_acls]: https://login.tailscale.com/admin/acls
 [tailscale_dns]: https://login.tailscale.com/admin/dns

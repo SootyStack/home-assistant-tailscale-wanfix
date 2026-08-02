@@ -1,0 +1,160 @@
+---
+name: Validate managed Tailscale app
+
+# yamllint disable-line rule:truthy
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+
+jobs:
+  source:
+    name: Source contract, tests, and shell checks
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the candidate source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate the managed-source contract
+        run: python3 scripts/release_contract.py --root .
+
+      - name: Run contract and intake unit tests
+        run: >-
+          python3 -m unittest discover
+          --start-directory tests
+          --pattern 'test_*.py'
+          --verbose
+
+      - name: Run focused unit tests
+        run: >-
+          python3 -m unittest discover
+          --start-directory tailscale/tests
+          --pattern 'test_*.py'
+          --verbose
+
+      - name: Locate Bash sources
+        id: shell-sources
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          mapfile -t shell_files < <(
+            git grep -Il \
+              -e '^#!.*bash' \
+              -e '^#!.*bashio' \
+              -- tailscale || true
+          )
+
+          if (( ${#shell_files[@]} == 0 )); then
+            echo "No Bash sources were found." >&2
+            exit 1
+          fi
+
+          printf '%s\n' "${shell_files[@]}" > "${RUNNER_TEMP}/bash-sources.txt"
+          printf 'Found %d Bash sources.\n' "${#shell_files[@]}"
+
+      - name: Check Bash syntax
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mapfile -t shell_files < "${RUNNER_TEMP}/bash-sources.txt"
+          bash -n "${shell_files[@]}"
+
+      - name: Run ShellCheck
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          shellcheck --version
+          mapfile -t shell_files < "${RUNNER_TEMP}/bash-sources.txt"
+          shellcheck --shell=bash "${shell_files[@]}"
+
+  prepare:
+    name: Prepare build matrix
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Check out the candidate source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read the app version
+        id: version
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          version="$(
+            sed -nE 's/^version:[[:space:]]*([^[:space:]#]+).*$/\1/p' tailscale/config.yaml \
+              | tr -d "\"'"
+          )"
+          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+-wanfix\.[0-9]+$ ]]; then
+            echo "tailscale/config.yaml has an invalid managed version: ${version:-<missing>}" >&2
+            exit 1
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Prepare the architecture matrix
+        id: matrix
+        uses: home-assistant/builder/actions/prepare-multi-arch-matrix@4de35182ce1e329181bffcbcc84d33db5e2c7e10 # 2026.06.0
+        with:
+          architectures: '["amd64", "aarch64"]'
+          image-name: tailscale-wanfix
+          registry-prefix: ghcr.io/sootystack
+
+  build:
+    name: Build ${{ matrix.arch }}
+    needs:
+      - source
+      - prepare
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - name: Check out the candidate source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build without publishing
+        uses: home-assistant/builder/actions/build-image@4de35182ce1e329181bffcbcc84d33db5e2c7e10 # 2026.06.0
+        with:
+          arch: ${{ matrix.arch }}
+          cache-gha: false
+          container-registry-password: ${{ github.token }}
+          context: ./tailscale
+          image: ${{ matrix.image }}
+          image-tags: ${{ needs.prepare.outputs.version }}
+          labels: |
+            io.hass.name=Tailscale WAN Diagnostics
+            io.hass.description=Tailscale with reviewed WAN recovery diagnostics
+            io.hass.type=app
+            io.hass.url=https://github.com/SootyStack/home-assistant-tailscale-wanfix
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+          push: false
+          version: ${{ needs.prepare.outputs.version }}
