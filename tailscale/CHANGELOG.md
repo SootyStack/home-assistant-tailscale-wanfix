@@ -10,3 +10,5 @@
 - Reduce persistent diagnostic logging to state transitions, bounded
   health events, and explicit capture mode.
 - Prepare a managed, immutable Home Assistant repository release channel.
+- Publish and independently verify signed `amd64` and `aarch64` images plus the
+  immutable multi-architecture manifest.

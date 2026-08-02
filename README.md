@@ -11,14 +11,15 @@ Tailscale, or Home Assistant Community Apps release.
 
 ## Current release state
 
-Version `0.28.1-wanfix.2` is a locally validated release candidate based on
-official app `v0.28.1`. It has not yet been published, installed through this
-repository, activated, or live-verified. Those states are recorded separately
-in [`release-manifest.json`](release-manifest.json).
+Version `0.28.1-wanfix.2`, based on official app `v0.28.1`, is published as a
+public, signed multi-architecture image. Its immutable index digest is
+`sha256:6919d56700aac518b21f94dea414d301f895233b54a728ce298c95ca67539d79`.
+Anonymous pulls, platform mapping, source labels, certificate identity, and
+transparency-log inclusion have been verified.
 
-Do not add this repository to Home Assistant until the matching immutable image
-has been published and the stable manifest has been promoted in a reviewed
-change.
+The release has not been installed, activated, or live-verified. Those remain
+separate Home Assistant operations and are recorded independently in
+[`release-manifest.json`](release-manifest.json).
 
 ## Release policy
 

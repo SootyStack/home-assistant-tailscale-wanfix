@@ -31,7 +31,27 @@ class ReleaseContractTests(unittest.TestCase):
         )
 
         lookups = {
+            "status": "published_verified_not_installed",
             "release.custom_version": "0.28.1-wanfix.2",
+            "release.publication.source_commit": (
+                "a841b6b5c80a1a2fc865eed4e5b03d97807e9747"
+            ),
+            "release.publication.image_index_digest": (
+                "sha256:6919d56700aac518b21f94dea414d301f895233b54a728ce298c95ca67539d79"
+            ),
+            "upstream.app.runtime_image": (
+                "ghcr.io/hassio-addons/tailscale:0.28.1"
+            ),
+            "upstream.app.runtime_image_index_digest": (
+                "sha256:2a15916111291ade93481fe17f4b30107610b1d510c02f7645d83a36fad4aece"
+            ),
+            "build.builder_image": "golang:1.26.1-alpine",
+            "build.builder_image_index_digest": (
+                "sha256:2389ebfa5b7f43eeafbd6be0c3700cc46690ef842ad962f6c5bd6be49ed82039"
+            ),
+            "build.base_images_digest_pinned": "true",
+            "verification.anonymous_pull_verified": "true",
+            "verification.signature_verified": "true",
             "source.candidate_commit": (
                 "013be1d851711bc3d4aa592d4137c752ea46bae6"
             ),
@@ -68,6 +88,137 @@ class ReleaseContractTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 release_contract.ContractError,
                 "config.yaml version does not match",
+            ):
+                release_contract.validate_repository(clone)
+
+    def test_unpublished_candidate_boundary_remains_supported(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="release-contract-") as temporary:
+            clone = Path(temporary) / "repository"
+            shutil.copytree(
+                ROOT,
+                clone,
+                ignore=shutil.ignore_patterns(
+                    ".git", "__pycache__", "upstream-candidates"
+                ),
+            )
+            manifest_path = clone / "release-manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["status"] = "locally_validated_not_published"
+            manifest["release"].pop("publication")
+            for key in (
+                "multi_arch_images_built",
+                "published",
+                "anonymous_pull_verified",
+                "signature_verified",
+            ):
+                manifest["verification"][key] = False
+            manifest_path.write_text(
+                json.dumps(manifest, indent=2) + "\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+
+            config = clone / "tailscale" / "config.yaml"
+            content = config.read_text(encoding="utf-8")
+            self.assertEqual(content.count("stage: stable"), 1)
+            config.write_text(
+                content.replace("stage: stable", "stage: experimental"),
+                encoding="utf-8",
+                newline="\n",
+            )
+
+            candidate = release_contract.validate_repository(clone)
+            self.assertEqual(
+                release_contract.resolve_dotted(candidate, "status"),
+                "locally_validated_not_published",
+            )
+
+    def test_unpinned_base_image_fails(self) -> None:
+        pinned_references = (
+            (
+                "golang:1.26.1-alpine@sha256:"
+                "2389ebfa5b7f43eeafbd6be0c3700cc46690ef842ad962f6c5bd6be49ed82039",
+                "golang:1.26.1-alpine",
+            ),
+            (
+                "ghcr.io/hassio-addons/tailscale:0.28.1@sha256:"
+                "2a15916111291ade93481fe17f4b30107610b1d510c02f7645d83a36fad4aece",
+                "ghcr.io/hassio-addons/tailscale:0.28.1",
+            ),
+        )
+        for pinned, unpinned in pinned_references:
+            with self.subTest(image=unpinned), tempfile.TemporaryDirectory(
+                prefix="release-contract-"
+            ) as temporary:
+                clone = Path(temporary) / "repository"
+                shutil.copytree(
+                    ROOT,
+                    clone,
+                    ignore=shutil.ignore_patterns(
+                        ".git", "__pycache__", "upstream-candidates"
+                    ),
+                )
+                dockerfile = clone / "tailscale" / "Dockerfile"
+                content = dockerfile.read_text(encoding="utf-8")
+                self.assertEqual(content.count(pinned), 1)
+                dockerfile.write_text(
+                    content.replace(pinned, unpinned),
+                    encoding="utf-8",
+                    newline="\n",
+                )
+                with self.assertRaisesRegex(
+                    release_contract.ContractError,
+                    "digest-pinned builder and runtime images",
+                ):
+                    release_contract.validate_repository(clone)
+
+    def test_malformed_base_image_digest_fails(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="release-contract-") as temporary:
+            clone = Path(temporary) / "repository"
+            shutil.copytree(
+                ROOT,
+                clone,
+                ignore=shutil.ignore_patterns(
+                    ".git", "__pycache__", "upstream-candidates"
+                ),
+            )
+            manifest_path = clone / "release-manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["build"]["builder_image_index_digest"] = "sha256:NOT-A-DIGEST"
+            manifest_path.write_text(
+                json.dumps(manifest, indent=2) + "\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+            with self.assertRaisesRegex(
+                release_contract.ContractError,
+                "lowercase sha256 OCI digest",
+            ):
+                release_contract.validate_repository(clone)
+
+    def test_malformed_published_image_digest_fails(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="release-contract-") as temporary:
+            clone = Path(temporary) / "repository"
+            shutil.copytree(
+                ROOT,
+                clone,
+                ignore=shutil.ignore_patterns(
+                    ".git", "__pycache__", "upstream-candidates"
+                ),
+            )
+            manifest_path = clone / "release-manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["release"]["publication"]["image_index_digest"] = (
+                "sha256:NOT-A-PUBLISHED-DIGEST"
+            )
+            manifest_path.write_text(
+                json.dumps(manifest, indent=2) + "\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+            with self.assertRaisesRegex(
+                release_contract.ContractError,
+                "lowercase sha256 OCI digest",
             ):
                 release_contract.validate_repository(clone)
 

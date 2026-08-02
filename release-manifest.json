@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "channel": "stable",
-  "status": "locally_validated_not_published",
+  "status": "published_verified_not_installed",
   "repository": {
     "canonical_url": "https://github.com/SootyStack/home-assistant-tailscale-wanfix",
     "stable_branch": "main",
@@ -12,7 +12,38 @@
     "custom_version": "0.28.1-wanfix.2",
     "image": "ghcr.io/sootystack/tailscale-wanfix",
     "automatic_install": false,
-    "mutable_tags": false
+    "mutable_tags": false,
+    "publication": {
+      "source_commit": "a841b6b5c80a1a2fc865eed4e5b03d97807e9747",
+      "image_reference": "ghcr.io/sootystack/tailscale-wanfix:0.28.1-wanfix.2",
+      "image_index_digest": "sha256:6919d56700aac518b21f94dea414d301f895233b54a728ce298c95ca67539d79",
+      "image_index_media_type": "application/vnd.oci.image.index.v1+json",
+      "published_at_utc": "2026-08-02T00:53:16Z",
+      "workflow_run_id": 30725863797,
+      "workflow_run_url": "https://github.com/SootyStack/home-assistant-tailscale-wanfix/actions/runs/30725863797",
+      "architectures": {
+        "amd64": {
+          "image": "ghcr.io/sootystack/amd64-tailscale-wanfix",
+          "image_index_digest": "sha256:875cdeb94ca88b62a07bb7d42f70dddb31f6c6b10d64f8a730970afdbab7bebc",
+          "platform": "linux/amd64",
+          "manifest_digest": "sha256:6a44bb395110b9dbed5a91163132ea5b084d9e09cb16d6463d7c1ea9d0dd16ff",
+          "config_digest": "sha256:996fc00be392728d8149cbd62b095c18cad0d13f8b4c2f90c6756c1030d218a7"
+        },
+        "aarch64": {
+          "image": "ghcr.io/sootystack/aarch64-tailscale-wanfix",
+          "image_index_digest": "sha256:c24961abacf63bf67085bf217622c5bd839936ba11d574dc5c2765bebcac3281",
+          "platform": "linux/arm64",
+          "manifest_digest": "sha256:ca47fe4e8cae2fcfe55a833c1b03e064280d4ed7841b6321331942f59b621ab6",
+          "config_digest": "sha256:af2ae2e7d8f9f7a53c0a32bb01866b10deb39b13d413dc4fc8b04297f7edfa20"
+        }
+      },
+      "signature": {
+        "verifier": "cosign v3.0.6",
+        "certificate_identity": "https://github.com/SootyStack/home-assistant-tailscale-wanfix/.github/workflows/release.yaml@refs/heads/main",
+        "certificate_oidc_issuer": "https://token.actions.githubusercontent.com",
+        "transparency_log_verified": true
+      }
+    }
   },
   "upstream": {
     "app": {
@@ -21,7 +52,8 @@
       "tag": "v0.28.1",
       "commit": "25b151d15b45d9b89dde6af549d96b19ffe6004c",
       "tree": "e439df9edaadf37bc88d0f8a8ea8e751cb1e2769",
-      "runtime_image": "ghcr.io/hassio-addons/tailscale:0.28.1"
+      "runtime_image": "ghcr.io/hassio-addons/tailscale:0.28.1",
+      "runtime_image_index_digest": "sha256:2a15916111291ade93481fe17f4b30107610b1d510c02f7645d83a36fad4aece"
     },
     "tailscale": {
       "repository": "tailscale/tailscale",
@@ -51,20 +83,24 @@
       "amd64",
       "aarch64"
     ],
+    "builder_image": "golang:1.26.1-alpine",
+    "builder_image_index_digest": "sha256:2389ebfa5b7f43eeafbd6be0c3700cc46690ef842ad962f6c5bd6be49ed82039",
     "builder_action_commit": "4de35182ce1e329181bffcbcc84d33db5e2c7e10",
     "checkout_action_commit": "3d3c42e5aac5ba805825da76410c181273ba90b1",
-    "base_images_digest_pinned": false,
+    "base_images_digest_pinned": true,
     "hermetic": false
   },
   "verification": {
     "source_locally_validated": true,
-    "multi_arch_images_built": false,
-    "published": false,
+    "multi_arch_images_built": true,
+    "published": true,
+    "anonymous_pull_verified": true,
+    "signature_verified": true,
     "installed": false,
     "activated": false,
     "live_verified": false,
     "failover_verified": false,
     "failback_verified": false
   },
-  "promotion_rule": "Publish and verify the immutable image before merging a stable version advertisement."
+  "promotion_rule": "Stable advertisement follows immutable publication, anonymous pull verification, and signature verification; installation and live validation remain separate approvals."
 }

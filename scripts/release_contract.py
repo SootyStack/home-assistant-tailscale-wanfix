@@ -16,6 +16,10 @@ from typing import Any
 MANIFEST_NAME = "release-manifest.json"
 SHA1_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+OCI_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+UTC_TIMESTAMP_RE = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+)
 UPSTREAM_VERSION_RE = re.compile(
     r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$"
 )
@@ -27,6 +31,9 @@ ACTION_USE_RE = re.compile(
     r"^\s*(?:-\s*)?uses:\s*[\"']?([^\"'\s#]+)[\"']?\s*(?:#.*)?$"
 )
 PINNED_ACTION_RE = re.compile(r"^([^@]+)@([0-9a-fA-F]{40})$")
+CANDIDATE_STATUS = "locally_validated_not_published"
+PUBLISHED_STATUS = "published_verified_not_installed"
+OCI_INDEX_MEDIA_TYPE = "application/vnd.oci.image.index.v1+json"
 
 ROOT_DOCUMENTS = (
     "README.md",
@@ -178,12 +185,150 @@ def _docker_arg(dockerfile: str, name: str) -> str:
     return next(group for group in match.groups() if group is not None)
 
 
+def _validate_publication_shape(manifest: dict[str, Any]) -> None:
+    string_paths = (
+        "release.publication.source_commit",
+        "release.publication.image_reference",
+        "release.publication.image_index_digest",
+        "release.publication.image_index_media_type",
+        "release.publication.published_at_utc",
+        "release.publication.workflow_run_url",
+        "release.publication.architectures.amd64.image",
+        "release.publication.architectures.amd64.image_index_digest",
+        "release.publication.architectures.amd64.platform",
+        "release.publication.architectures.amd64.manifest_digest",
+        "release.publication.architectures.amd64.config_digest",
+        "release.publication.architectures.aarch64.image",
+        "release.publication.architectures.aarch64.image_index_digest",
+        "release.publication.architectures.aarch64.platform",
+        "release.publication.architectures.aarch64.manifest_digest",
+        "release.publication.architectures.aarch64.config_digest",
+        "release.publication.signature.verifier",
+        "release.publication.signature.certificate_identity",
+        "release.publication.signature.certificate_oidc_issuer",
+    )
+    for path in string_paths:
+        _manifest_value(manifest, path, str)
+
+    publication = _manifest_value(manifest, "release.publication", dict)
+    architectures = _manifest_value(
+        manifest, "release.publication.architectures", dict
+    )
+    _require(
+        set(architectures) == {"amd64", "aarch64"},
+        "release publication must contain exactly amd64 and aarch64",
+    )
+
+    source_commit = resolve_dotted(manifest, "release.publication.source_commit")
+    _require(
+        SHA1_RE.fullmatch(source_commit) is not None,
+        "release.publication.source_commit must be lowercase 40 hex",
+    )
+
+    digest_paths = (
+        "release.publication.image_index_digest",
+        "release.publication.architectures.amd64.image_index_digest",
+        "release.publication.architectures.amd64.manifest_digest",
+        "release.publication.architectures.amd64.config_digest",
+        "release.publication.architectures.aarch64.image_index_digest",
+        "release.publication.architectures.aarch64.manifest_digest",
+        "release.publication.architectures.aarch64.config_digest",
+    )
+    for path in digest_paths:
+        _require(
+            OCI_DIGEST_RE.fullmatch(resolve_dotted(manifest, path)) is not None,
+            f"manifest value {path} must be a lowercase sha256 OCI digest",
+        )
+
+    image = resolve_dotted(manifest, "release.image")
+    custom_version = resolve_dotted(manifest, "release.custom_version")
+    _require(
+        resolve_dotted(manifest, "release.publication.image_reference")
+        == f"{image}:{custom_version}",
+        "release publication image reference must match image and version",
+    )
+    _require(
+        resolve_dotted(manifest, "release.publication.image_index_media_type")
+        == OCI_INDEX_MEDIA_TYPE,
+        "release publication must be an OCI image index",
+    )
+
+    image_prefix, image_name = image.rsplit("/", 1)
+    expected_architectures = {
+        "amd64": (f"{image_prefix}/amd64-{image_name}", "linux/amd64"),
+        "aarch64": (f"{image_prefix}/aarch64-{image_name}", "linux/arm64"),
+    }
+    for architecture, (expected_image, expected_platform) in (
+        expected_architectures.items()
+    ):
+        prefix = f"release.publication.architectures.{architecture}"
+        _require(
+            resolve_dotted(manifest, f"{prefix}.image") == expected_image,
+            f"{prefix}.image does not match release.image",
+        )
+        _require(
+            resolve_dotted(manifest, f"{prefix}.platform") == expected_platform,
+            f"{prefix}.platform is not the reviewed platform",
+        )
+
+    published_at = resolve_dotted(manifest, "release.publication.published_at_utc")
+    _require(
+        UTC_TIMESTAMP_RE.fullmatch(published_at) is not None,
+        "release publication timestamp must be UTC YYYY-MM-DDTHH:MM:SSZ",
+    )
+    workflow_run_id = resolve_dotted(manifest, "release.publication.workflow_run_id")
+    _require(
+        isinstance(workflow_run_id, int)
+        and not isinstance(workflow_run_id, bool)
+        and workflow_run_id > 0,
+        "release publication workflow_run_id must be a positive integer",
+    )
+    canonical_url = resolve_dotted(manifest, "repository.canonical_url")
+    _require(
+        resolve_dotted(manifest, "release.publication.workflow_run_url")
+        == f"{canonical_url}/actions/runs/{workflow_run_id}",
+        "release publication workflow URL does not match its run ID",
+    )
+
+    _require(
+        re.fullmatch(
+            r"cosign v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\."
+            r"(?:0|[1-9][0-9]*)",
+            resolve_dotted(manifest, "release.publication.signature.verifier"),
+        )
+        is not None,
+        "release signature verifier must be a versioned cosign release",
+    )
+    expected_identity = (
+        f"{canonical_url}/.github/workflows/release.yaml@refs/heads/main"
+    )
+    _require(
+        resolve_dotted(
+            manifest, "release.publication.signature.certificate_identity"
+        )
+        == expected_identity,
+        "release signature certificate identity does not match release.yaml on main",
+    )
+    _require(
+        resolve_dotted(
+            manifest, "release.publication.signature.certificate_oidc_issuer"
+        )
+        == "https://token.actions.githubusercontent.com",
+        "release signature certificate issuer must be GitHub Actions",
+    )
+    _require(
+        publication["signature"].get("transparency_log_verified") is True,
+        "release signature transparency log must be verified",
+    )
+
+
 def _validate_manifest_shape(manifest: dict[str, Any]) -> None:
     _require(manifest.get("schema_version") == 1, "unsupported manifest schema_version")
     _require(manifest.get("channel") == "stable", "manifest channel must be stable")
+    status = manifest.get("status")
     _require(
-        manifest.get("status") in {"locally_validated_not_published"},
-        "manifest status is not allowed at the publication boundary",
+        status in {CANDIDATE_STATUS, PUBLISHED_STATUS},
+        "manifest status is not supported",
     )
 
     string_paths = (
@@ -199,6 +344,7 @@ def _validate_manifest_shape(manifest: dict[str, Any]) -> None:
         "upstream.app.commit",
         "upstream.app.tree",
         "upstream.app.runtime_image",
+        "upstream.app.runtime_image_index_digest",
         "upstream.tailscale.repository",
         "upstream.tailscale.version",
         "upstream.tailscale.tag",
@@ -206,6 +352,8 @@ def _validate_manifest_shape(manifest: dict[str, Any]) -> None:
         "upstream.tailscale.patched_tree",
         "source.candidate_commit",
         "source.candidate_tree",
+        "build.builder_image",
+        "build.builder_image_index_digest",
         "build.builder_action_commit",
         "build.checkout_action_commit",
     )
@@ -235,6 +383,29 @@ def _validate_manifest_shape(manifest: dict[str, Any]) -> None:
         resolve_dotted(manifest, "upstream.tailscale.tag") == f"v{tailscale_version}",
         "upstream.tailscale.tag must match upstream.tailscale.version",
     )
+    _require(
+        resolve_dotted(manifest, "upstream.app.runtime_image")
+        == f"ghcr.io/hassio-addons/tailscale:{upstream_app_version}",
+        "upstream.app.runtime_image must match upstream.app.version",
+    )
+    _require(
+        re.fullmatch(
+            r"golang:(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\."
+            r"(?:0|[1-9][0-9]*)-alpine",
+            resolve_dotted(manifest, "build.builder_image"),
+        )
+        is not None,
+        "build.builder_image must be a versioned golang alpine image",
+    )
+
+    for path in (
+        "upstream.app.runtime_image_index_digest",
+        "build.builder_image_index_digest",
+    ):
+        _require(
+            OCI_DIGEST_RE.fullmatch(resolve_dotted(manifest, path)) is not None,
+            f"manifest value {path} must be a lowercase sha256 OCI digest",
+        )
 
     sha_paths = (
         "upstream.app.commit",
@@ -278,10 +449,13 @@ def _validate_manifest_shape(manifest: dict[str, Any]) -> None:
         "release.automatic_install must be false",
     )
 
+    is_published = status == PUBLISHED_STATUS
     verification_boundary = {
         "source_locally_validated": True,
-        "multi_arch_images_built": False,
-        "published": False,
+        "multi_arch_images_built": is_published,
+        "published": is_published,
+        "anonymous_pull_verified": is_published,
+        "signature_verified": is_published,
         "installed": False,
         "activated": False,
         "live_verified": False,
@@ -293,11 +467,14 @@ def _validate_manifest_shape(manifest: dict[str, Any]) -> None:
             resolve_dotted(manifest, f"verification.{key}") is expected,
             f"verification.{key} must be {str(expected).lower()}",
         )
-    for key in ("base_images_digest_pinned", "hermetic"):
-        _require(
-            isinstance(resolve_dotted(manifest, f"build.{key}"), bool),
-            f"build.{key} must be a boolean",
-        )
+    _require(
+        resolve_dotted(manifest, "build.base_images_digest_pinned") is True,
+        "build.base_images_digest_pinned must be true",
+    )
+    _require(
+        resolve_dotted(manifest, "build.hermetic") is False,
+        "build.hermetic must remain false until dependency closure is captured",
+    )
 
     image = resolve_dotted(manifest, "release.image")
     _require(
@@ -318,6 +495,15 @@ def _validate_manifest_shape(manifest: dict[str, Any]) -> None:
         is not None,
         "upstream.app.repository must be owner/name",
     )
+
+    release = _manifest_value(manifest, "release", dict)
+    if is_published:
+        _validate_publication_shape(manifest)
+    else:
+        _require(
+            "publication" not in release,
+            "unpublished candidates must not contain release publication data",
+        )
 
 
 def _validate_documents(root: Path, app_root: Path) -> None:
@@ -351,7 +537,11 @@ def _validate_configuration(
         "slug": resolve_dotted(manifest, "repository.app_slug"),
         "url": resolve_dotted(manifest, "repository.canonical_url"),
         "image": resolve_dotted(manifest, "release.image"),
-        "stage": "experimental",
+        "stage": (
+            "stable"
+            if resolve_dotted(manifest, "status") == PUBLISHED_STATUS
+            else "experimental"
+        ),
     }
     for key, expected in expected_scalars.items():
         actual = _yaml_scalar(config, key, config_path)
@@ -385,6 +575,13 @@ def _validate_dockerfile_and_patches(
     tailscale_version = resolve_dotted(manifest, "upstream.tailscale.version")
     tailscale_tag = resolve_dotted(manifest, "upstream.tailscale.tag")
     runtime_image = resolve_dotted(manifest, "upstream.app.runtime_image")
+    runtime_image_digest = resolve_dotted(
+        manifest, "upstream.app.runtime_image_index_digest"
+    )
+    builder_image = resolve_dotted(manifest, "build.builder_image")
+    builder_image_digest = resolve_dotted(
+        manifest, "build.builder_image_index_digest"
+    )
 
     _require(
         _docker_arg(dockerfile, "TAILSCALE_COMMIT") == tailscale_commit,
@@ -399,10 +596,24 @@ def _validate_dockerfile_and_patches(
         is not None,
         "Dockerfile clone tag does not match upstream.tailscale.tag",
     )
+    from_lines = [
+        (match.group(1), match.group(2).lower() if match.group(2) else None)
+        for match in re.finditer(
+            r"^FROM\s+([^\s]+)(?:\s+AS\s+([A-Za-z0-9._-]+))?\s*$",
+            dockerfile,
+            re.IGNORECASE | re.MULTILINE,
+        )
+    ]
+    expected_from_lines = [
+        (
+            f"{builder_image}@{builder_image_digest}",
+            "tailscale-wanfix-builder",
+        ),
+        (f"{runtime_image}@{runtime_image_digest}", None),
+    ]
     _require(
-        re.search(rf"^FROM\s+{re.escape(runtime_image)}(?:\s|$)", dockerfile, re.MULTILINE)
-        is not None,
-        "Dockerfile runtime image does not match upstream.app.runtime_image",
+        from_lines == expected_from_lines,
+        "Dockerfile must use exactly the digest-pinned builder and runtime images",
     )
 
     patches = _manifest_value(manifest, "patches", list)

@@ -1,4 +1,4 @@
-FROM golang:1.26.1-alpine AS tailscale-wanfix-builder
+FROM golang:1.26.1-alpine@sha256:2389ebfa5b7f43eeafbd6be0c3700cc46690ef842ad962f6c5bd6be49ed82039 AS tailscale-wanfix-builder
 
 ARG TAILSCALE_COMMIT="41cb72f27119f95b859335f3ffc3434d6ca55e23"
 ARG TAILSCALE_VERSION_LONG="1.96.4-t41cb72f27-hivewan1"
@@ -37,7 +37,7 @@ RUN \
         -o /out/tailscale \
         ./cmd/tailscale
 
-FROM ghcr.io/hassio-addons/tailscale:0.28.1
+FROM ghcr.io/hassio-addons/tailscale:0.28.1@sha256:2a15916111291ade93481fe17f4b30107610b1d510c02f7645d83a36fad4aece
 
 # Set shell
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
