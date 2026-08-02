@@ -16,6 +16,7 @@ from typing import Any
 MANIFEST_NAME = "release-manifest.json"
 SHA1_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+OCI_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 UPSTREAM_VERSION_RE = re.compile(
     r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$"
 )
@@ -199,6 +200,7 @@ def _validate_manifest_shape(manifest: dict[str, Any]) -> None:
         "upstream.app.commit",
         "upstream.app.tree",
         "upstream.app.runtime_image",
+        "upstream.app.runtime_image_index_digest",
         "upstream.tailscale.repository",
         "upstream.tailscale.version",
         "upstream.tailscale.tag",
@@ -206,6 +208,8 @@ def _validate_manifest_shape(manifest: dict[str, Any]) -> None:
         "upstream.tailscale.patched_tree",
         "source.candidate_commit",
         "source.candidate_tree",
+        "build.builder_image",
+        "build.builder_image_index_digest",
         "build.builder_action_commit",
         "build.checkout_action_commit",
     )
@@ -235,6 +239,29 @@ def _validate_manifest_shape(manifest: dict[str, Any]) -> None:
         resolve_dotted(manifest, "upstream.tailscale.tag") == f"v{tailscale_version}",
         "upstream.tailscale.tag must match upstream.tailscale.version",
     )
+    _require(
+        resolve_dotted(manifest, "upstream.app.runtime_image")
+        == f"ghcr.io/hassio-addons/tailscale:{upstream_app_version}",
+        "upstream.app.runtime_image must match upstream.app.version",
+    )
+    _require(
+        re.fullmatch(
+            r"golang:(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\."
+            r"(?:0|[1-9][0-9]*)-alpine",
+            resolve_dotted(manifest, "build.builder_image"),
+        )
+        is not None,
+        "build.builder_image must be a versioned golang alpine image",
+    )
+
+    for path in (
+        "upstream.app.runtime_image_index_digest",
+        "build.builder_image_index_digest",
+    ):
+        _require(
+            OCI_DIGEST_RE.fullmatch(resolve_dotted(manifest, path)) is not None,
+            f"manifest value {path} must be a lowercase sha256 OCI digest",
+        )
 
     sha_paths = (
         "upstream.app.commit",
@@ -293,11 +320,14 @@ def _validate_manifest_shape(manifest: dict[str, Any]) -> None:
             resolve_dotted(manifest, f"verification.{key}") is expected,
             f"verification.{key} must be {str(expected).lower()}",
         )
-    for key in ("base_images_digest_pinned", "hermetic"):
-        _require(
-            isinstance(resolve_dotted(manifest, f"build.{key}"), bool),
-            f"build.{key} must be a boolean",
-        )
+    _require(
+        resolve_dotted(manifest, "build.base_images_digest_pinned") is True,
+        "build.base_images_digest_pinned must be true",
+    )
+    _require(
+        resolve_dotted(manifest, "build.hermetic") is False,
+        "build.hermetic must remain false until dependency closure is captured",
+    )
 
     image = resolve_dotted(manifest, "release.image")
     _require(
@@ -385,6 +415,13 @@ def _validate_dockerfile_and_patches(
     tailscale_version = resolve_dotted(manifest, "upstream.tailscale.version")
     tailscale_tag = resolve_dotted(manifest, "upstream.tailscale.tag")
     runtime_image = resolve_dotted(manifest, "upstream.app.runtime_image")
+    runtime_image_digest = resolve_dotted(
+        manifest, "upstream.app.runtime_image_index_digest"
+    )
+    builder_image = resolve_dotted(manifest, "build.builder_image")
+    builder_image_digest = resolve_dotted(
+        manifest, "build.builder_image_index_digest"
+    )
 
     _require(
         _docker_arg(dockerfile, "TAILSCALE_COMMIT") == tailscale_commit,
@@ -399,10 +436,24 @@ def _validate_dockerfile_and_patches(
         is not None,
         "Dockerfile clone tag does not match upstream.tailscale.tag",
     )
+    from_lines = [
+        (match.group(1), match.group(2).lower() if match.group(2) else None)
+        for match in re.finditer(
+            r"^FROM\s+([^\s]+)(?:\s+AS\s+([A-Za-z0-9._-]+))?\s*$",
+            dockerfile,
+            re.IGNORECASE | re.MULTILINE,
+        )
+    ]
+    expected_from_lines = [
+        (
+            f"{builder_image}@{builder_image_digest}",
+            "tailscale-wanfix-builder",
+        ),
+        (f"{runtime_image}@{runtime_image_digest}", None),
+    ]
     _require(
-        re.search(rf"^FROM\s+{re.escape(runtime_image)}(?:\s|$)", dockerfile, re.MULTILINE)
-        is not None,
-        "Dockerfile runtime image does not match upstream.app.runtime_image",
+        from_lines == expected_from_lines,
+        "Dockerfile must use exactly the digest-pinned builder and runtime images",
     )
 
     patches = _manifest_value(manifest, "patches", list)

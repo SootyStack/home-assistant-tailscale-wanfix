@@ -28,8 +28,13 @@ only when that exact version is installable.
 
 ## Reproducibility boundary
 
-Source provenance is locked, but the image build is not yet claimed to be
-hermetic. The Dockerfile currently uses tag-addressed base images, installs
-packages from Alpine repositories, and clones the locked Tailscale commit over
-the network. Base-image digests and dependency closure must be captured before
-making a hermetic-build claim.
+Source provenance is locked, and both multi-architecture base-image indexes are
+pinned by SHA-256 digest in the Dockerfile and release manifest. The digests
+were resolved from the public OCI Distribution APIs; image signatures and
+attestations were not independently verified.
+
+The build is still not claimed to be hermetic. It installs packages from Alpine
+repositories, clones the locked Tailscale commit over the network, resolves Go
+dependencies through network services, and runs on mutable hosted build
+infrastructure. Dependency closure and the build environment must be captured
+before making a hermetic-build or byte-for-byte reproducibility claim.

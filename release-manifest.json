@@ -21,7 +21,8 @@
       "tag": "v0.28.1",
       "commit": "25b151d15b45d9b89dde6af549d96b19ffe6004c",
       "tree": "e439df9edaadf37bc88d0f8a8ea8e751cb1e2769",
-      "runtime_image": "ghcr.io/hassio-addons/tailscale:0.28.1"
+      "runtime_image": "ghcr.io/hassio-addons/tailscale:0.28.1",
+      "runtime_image_index_digest": "sha256:2a15916111291ade93481fe17f4b30107610b1d510c02f7645d83a36fad4aece"
     },
     "tailscale": {
       "repository": "tailscale/tailscale",
@@ -51,9 +52,11 @@
       "amd64",
       "aarch64"
     ],
+    "builder_image": "golang:1.26.1-alpine",
+    "builder_image_index_digest": "sha256:2389ebfa5b7f43eeafbd6be0c3700cc46690ef842ad962f6c5bd6be49ed82039",
     "builder_action_commit": "4de35182ce1e329181bffcbcc84d33db5e2c7e10",
     "checkout_action_commit": "3d3c42e5aac5ba805825da76410c181273ba90b1",
-    "base_images_digest_pinned": false,
+    "base_images_digest_pinned": true,
     "hermetic": false
   },
   "verification": {
