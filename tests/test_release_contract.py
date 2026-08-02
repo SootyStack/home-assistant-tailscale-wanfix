@@ -27,18 +27,12 @@ class ReleaseContractTests(unittest.TestCase):
         manifest = release_contract.validate_repository(ROOT)
         self.assertEqual(
             release_contract.resolve_dotted(manifest, "release.custom_version"),
-            "0.28.1-wanfix.2",
+            "0.28.1-wanfix.3",
         )
 
         lookups = {
-            "status": "published_verified_not_installed",
-            "release.custom_version": "0.28.1-wanfix.2",
-            "release.publication.source_commit": (
-                "a841b6b5c80a1a2fc865eed4e5b03d97807e9747"
-            ),
-            "release.publication.image_index_digest": (
-                "sha256:6919d56700aac518b21f94dea414d301f895233b54a728ce298c95ca67539d79"
-            ),
+            "status": "locally_validated_not_published",
+            "release.custom_version": "0.28.1-wanfix.3",
             "upstream.app.runtime_image": (
                 "ghcr.io/hassio-addons/tailscale:0.28.1"
             ),
@@ -50,10 +44,10 @@ class ReleaseContractTests(unittest.TestCase):
                 "sha256:2389ebfa5b7f43eeafbd6be0c3700cc46690ef842ad962f6c5bd6be49ed82039"
             ),
             "build.base_images_digest_pinned": "true",
-            "verification.anonymous_pull_verified": "true",
-            "verification.signature_verified": "true",
+            "verification.anonymous_pull_verified": "false",
+            "verification.signature_verified": "false",
             "source.candidate_commit": (
-                "013be1d851711bc3d4aa592d4137c752ea46bae6"
+                "d6b6ffd28711c40f83b2bd62d9c8b97f2aaaa2e3"
             ),
         }
         for dotted_path, expected in lookups.items():
@@ -78,7 +72,7 @@ class ReleaseContractTests(unittest.TestCase):
             )
             config = clone / "tailscale" / "config.yaml"
             content = config.read_text(encoding="utf-8")
-            expected = "version: 0.28.1-wanfix.2"
+            expected = "version: 0.28.1-wanfix.3"
             self.assertEqual(content.count(expected), 1)
             config.write_text(
                 content.replace(expected, "version: 0.28.1-wanfix.99"),
@@ -104,7 +98,7 @@ class ReleaseContractTests(unittest.TestCase):
             manifest_path = clone / "release-manifest.json"
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             manifest["status"] = "locally_validated_not_published"
-            manifest["release"].pop("publication")
+            manifest["release"].pop("publication", None)
             for key in (
                 "multi_arch_images_built",
                 "published",
@@ -120,12 +114,14 @@ class ReleaseContractTests(unittest.TestCase):
 
             config = clone / "tailscale" / "config.yaml"
             content = config.read_text(encoding="utf-8")
-            self.assertEqual(content.count("stage: stable"), 1)
-            config.write_text(
-                content.replace("stage: stable", "stage: experimental"),
-                encoding="utf-8",
-                newline="\n",
-            )
+            if "stage: stable" in content:
+                config.write_text(
+                    content.replace("stage: stable", "stage: experimental"),
+                    encoding="utf-8",
+                    newline="\n",
+                )
+            else:
+                self.assertEqual(content.count("stage: experimental"), 1)
 
             candidate = release_contract.validate_repository(clone)
             self.assertEqual(
@@ -197,6 +193,8 @@ class ReleaseContractTests(unittest.TestCase):
                 release_contract.validate_repository(clone)
 
     def test_malformed_published_image_digest_fails(self) -> None:
+        if "publication" not in release_contract.load_manifest(ROOT)["release"]:
+            self.skipTest("current checkout is an unpublished candidate")
         with tempfile.TemporaryDirectory(prefix="release-contract-") as temporary:
             clone = Path(temporary) / "repository"
             shutil.copytree(
