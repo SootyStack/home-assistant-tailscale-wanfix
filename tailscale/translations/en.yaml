@@ -52,6 +52,12 @@ configuration:
       Imports the existing Tailscale identity from an unprotected,
       Tailscale-only Supervisor backup before the diagnostic daemon starts.
       Leave empty after the first successful start.
+  diagnostic_seed_source:
+    name: One-time state seed source
+    description: >-
+      Selects the exact installed Tailscale app identity whose state archive is
+      imported from the one-time Supervisor backup. Select official for the
+      Community Apps installation or local for a local-app migration.
   exit_node:
     name: Use exit node
     description: >-

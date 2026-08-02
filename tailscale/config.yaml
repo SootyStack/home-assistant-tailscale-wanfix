@@ -1,6 +1,6 @@
 ---
 name: Tailscale WAN Diagnostics
-version: 0.28.1-wanfix.2
+version: 0.28.1-wanfix.3
 slug: tailscale
 description: Tailscale with reviewed WAN recovery diagnostics
 url: https://github.com/SootyStack/home-assistant-tailscale-wanfix
@@ -52,6 +52,7 @@ options:
   always_use_derp: false
   diagnostic_capture: false
   diagnostic_seed_backup: ""
+  diagnostic_seed_source: disabled
   log_level: info
   login_server: "https://controlplane.tailscale.com"
   share_homeassistant: disabled
@@ -79,6 +80,7 @@ schema:
   always_use_derp: bool
   diagnostic_capture: bool
   diagnostic_seed_backup: "match(^([0-9a-f]{8})?$)"
+  diagnostic_seed_source: list(disabled|official|local)
   exit_node: "match(^(?:(?:(?:25[0-5]|(?:2[0-4]|1\\d|[1-9]?)\\d)\\.){3}(?:25[0-5]|(?:2[0-4]|1\\d|[1-9]?)\\d)|[a-fA-F\\d.:]+:[a-fA-F\\d.:]+|[a-fA-F\\d]{8}(?:-[a-fA-F\\d]{4}){3}-[a-fA-F\\d]{12}|auto:any)$)?"
   log_level: list(trace|debug|info|notice|warning|error|fatal)
   login_server: url

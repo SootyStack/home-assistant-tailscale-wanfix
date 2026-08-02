@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.28.1-wanfix.3
+
+- Allow a one-time identity seed to select either the official Community Apps
+  installation or a local Home Assistant app as its exact source.
+- Add functional synthetic-backup coverage for the guarded identity import.
+
 ## 0.28.1-wanfix.2
 
 - Base the app on official Home Assistant Community Apps Tailscale `v0.28.1`.
