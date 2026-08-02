@@ -9,32 +9,32 @@
     "app_slug": "tailscale"
   },
   "release": {
-    "custom_version": "0.28.1-wanfix.2",
+    "custom_version": "0.28.1-wanfix.3",
     "image": "ghcr.io/sootystack/tailscale-wanfix",
     "automatic_install": false,
     "mutable_tags": false,
     "publication": {
-      "source_commit": "a841b6b5c80a1a2fc865eed4e5b03d97807e9747",
-      "image_reference": "ghcr.io/sootystack/tailscale-wanfix:0.28.1-wanfix.2",
-      "image_index_digest": "sha256:6919d56700aac518b21f94dea414d301f895233b54a728ce298c95ca67539d79",
+      "source_commit": "f462f6c3dae3eb27809a484b4d24f94cb12e9514",
+      "image_reference": "ghcr.io/sootystack/tailscale-wanfix:0.28.1-wanfix.3",
+      "image_index_digest": "sha256:8cfd8512dc76baa0193367103dcc305910e361eb556579149fbf33abb053397b",
       "image_index_media_type": "application/vnd.oci.image.index.v1+json",
-      "published_at_utc": "2026-08-02T00:53:16Z",
-      "workflow_run_id": 30725863797,
-      "workflow_run_url": "https://github.com/SootyStack/home-assistant-tailscale-wanfix/actions/runs/30725863797",
+      "published_at_utc": "2026-08-02T02:24:09Z",
+      "workflow_run_id": 30728609619,
+      "workflow_run_url": "https://github.com/SootyStack/home-assistant-tailscale-wanfix/actions/runs/30728609619",
       "architectures": {
         "amd64": {
           "image": "ghcr.io/sootystack/amd64-tailscale-wanfix",
-          "image_index_digest": "sha256:875cdeb94ca88b62a07bb7d42f70dddb31f6c6b10d64f8a730970afdbab7bebc",
+          "image_index_digest": "sha256:9cfbe8b7588570aaa21f5a242b0f9674f7649d10ca67db5b3bc8ecce010438ae",
           "platform": "linux/amd64",
-          "manifest_digest": "sha256:6a44bb395110b9dbed5a91163132ea5b084d9e09cb16d6463d7c1ea9d0dd16ff",
-          "config_digest": "sha256:996fc00be392728d8149cbd62b095c18cad0d13f8b4c2f90c6756c1030d218a7"
+          "manifest_digest": "sha256:d64fbac056798600e2552c6f4823794266d180edaefa7b7e63a8fabaeebc08a7",
+          "config_digest": "sha256:9d75f346a862ad7f002f8a001c711430e591c225043bb380d7f421783bf84b51"
         },
         "aarch64": {
           "image": "ghcr.io/sootystack/aarch64-tailscale-wanfix",
-          "image_index_digest": "sha256:c24961abacf63bf67085bf217622c5bd839936ba11d574dc5c2765bebcac3281",
+          "image_index_digest": "sha256:72e44471949affd4a4eeb8cc5d1e520985bb34391b53aa2648f61c27cbb586c3",
           "platform": "linux/arm64",
-          "manifest_digest": "sha256:ca47fe4e8cae2fcfe55a833c1b03e064280d4ed7841b6321331942f59b621ab6",
-          "config_digest": "sha256:af2ae2e7d8f9f7a53c0a32bb01866b10deb39b13d413dc4fc8b04297f7edfa20"
+          "manifest_digest": "sha256:1d1261b19fda5a42eabf09ae60dcfa3d50d87905ef91041b008d385e178b0f07",
+          "config_digest": "sha256:c9fc3203b3179e461bae8dff682d5d38802bac287e5d463069094406c1f9941e"
         }
       },
       "signature": {
@@ -64,12 +64,13 @@
     }
   },
   "source": {
-    "candidate_commit": "013be1d851711bc3d4aa592d4137c752ea46bae6",
-    "candidate_tree": "a49910000ab5002023c98423af738fd755b5b626",
+    "candidate_commit": "d6b6ffd28711c40f83b2bd62d9c8b97f2aaaa2e3",
+    "candidate_tree": "b5256822cf5ab0544361f58577f03120dc17af26",
     "custom_commits": [
       "2cb8f7e7b9eec743be431f5626b464a3b4e0e694",
       "31b3a0f2836c8435a48d30707098260e0b60d628",
-      "013be1d851711bc3d4aa592d4137c752ea46bae6"
+      "013be1d851711bc3d4aa592d4137c752ea46bae6",
+      "d6b6ffd28711c40f83b2bd62d9c8b97f2aaaa2e3"
     ]
   },
   "patches": [

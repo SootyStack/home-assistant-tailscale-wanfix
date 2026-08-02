@@ -2,40 +2,65 @@
 # shellcheck shell=bash
 export LOG_FD
 
-readonly SOURCE_ADDON_ARCHIVE="a0d7b954_tailscale.tar.gz"
-readonly COMPLETION_MARKER="/data/.diagnostic-seed-complete"
+readonly DATA_DIRECTORY="/data"
+readonly BACKUP_DIRECTORY="/backup"
+readonly TEMP_DIRECTORY="/tmp"
+readonly COMPLETION_MARKER="${DATA_DIRECTORY}/.diagnostic-seed-complete"
 
-declare backup_slug backup_archive=""
+declare backup_slug backup_archive="" source_selector source_addon_archive
 declare workspace="" extracted_data addon_archive
 declare candidate optional_marker=""
 
 cleanup() {
-  if [[ "${workspace}" == /tmp/tailscale-seed.* ]] && [[ -d "${workspace}" ]]; then
+  if [[ "${workspace}" == "${TEMP_DIRECTORY}"/tailscale-seed.* ]] && \
+    [[ -d "${workspace}" ]]; then
     rm -rf -- "${workspace}"
   fi
 }
 trap cleanup EXIT
 
 backup_slug=$(bashio::config "diagnostic_seed_backup")
-if ! bashio::var.has_value "${backup_slug}"; then
+source_selector=$(bashio::config "diagnostic_seed_source")
+if ! bashio::var.has_value "${backup_slug}" && \
+  { ! bashio::var.has_value "${source_selector}" || \
+    [[ "${source_selector}" == "disabled" ]]; }; then
   exit 0
+fi
+if ! bashio::var.has_value "${backup_slug}"; then
+  bashio::exit.nok "A diagnostic seed source requires a backup slug"
 fi
 if [[ ! "${backup_slug}" =~ ^[0-9a-f]{8}$ ]]; then
   bashio::exit.nok "The diagnostic seed backup slug is invalid"
 fi
 
+case "${source_selector}" in
+  official)
+    source_addon_archive="a0d7b954_tailscale.tar.gz"
+    ;;
+  local)
+    source_addon_archive="local_tailscale.tar.gz"
+    ;;
+  disabled)
+    bashio::exit.nok "A diagnostic seed backup requires an enabled source"
+    ;;
+  *)
+    bashio::exit.nok "The diagnostic seed source is not supported"
+    ;;
+esac
+
 if [[ -f "${COMPLETION_MARKER}" ]]; then
   bashio::log.info "Tailscale identity seed was already completed"
   exit 0
 fi
-if [[ -e /data/tailscaled.state ]] || [[ -e /data/state ]]; then
+if [[ -e "${DATA_DIRECTORY}/tailscaled.state" ]] || \
+  [[ -e "${DATA_DIRECTORY}/state" ]]; then
   bashio::exit.nok \
     "Refusing to seed over an existing Tailscale identity without a completion marker"
 fi
 
 for candidate in \
-  "/backup/${backup_slug}.tar" \
-  "/backup/${backup_slug}.tar.gz";
+  "${BACKUP_DIRECTORY}/${backup_slug}.tar" \
+  "${BACKUP_DIRECTORY}/${backup_slug}.tar.gz";
 do
   if [[ -f "${candidate}" ]]; then
     backup_archive="${candidate}"
@@ -46,16 +71,18 @@ if ! bashio::var.has_value "${backup_archive}"; then
   bashio::exit.nok "The requested Tailscale seed backup was not found"
 fi
 
-workspace=$(mktemp -d "/tmp/tailscale-seed.XXXXXXXX")
-if [[ "${workspace}" != /tmp/tailscale-seed.* ]] || [[ ! -d "${workspace}" ]]; then
+workspace=$(mktemp -d "${TEMP_DIRECTORY}/tailscale-seed.XXXXXXXX")
+if [[ "${workspace}" != "${TEMP_DIRECTORY}"/tailscale-seed.* ]] || \
+  [[ ! -d "${workspace}" ]]; then
   bashio::exit.nok "Failed to create a safe temporary state import directory"
 fi
 mkdir -p "${workspace}/extracted"
 
-if ! tar -xf "${backup_archive}" -C "${workspace}" "${SOURCE_ADDON_ARCHIVE}"; then
-  bashio::exit.nok "The backup does not contain the expected Tailscale add-on archive"
+if ! tar -xf "${backup_archive}" -C "${workspace}" "${source_addon_archive}"; then
+  bashio::exit.nok \
+    "The backup does not contain the selected Tailscale add-on archive"
 fi
-addon_archive="${workspace}/${SOURCE_ADDON_ARCHIVE}"
+addon_archive="${workspace}/${source_addon_archive}"
 
 if ! tar -tzf "${addon_archive}" | grep -Fxq "data/tailscaled.state"; then
   bashio::exit.nok "The backup does not contain a Tailscale identity state file"
@@ -87,22 +114,29 @@ if find "${extracted_data}/state" ! -type f ! -type d -print -quit | grep -q .; 
   bashio::exit.nok "The extracted Tailscale state contains an unsupported file type"
 fi
 
-cp -a "${extracted_data}/state" /data/state
-cp "${extracted_data}/tailscaled.state" /data/tailscaled.state
+cp -a "${extracted_data}/state" "${DATA_DIRECTORY}/state"
+cp "${extracted_data}/tailscaled.state" "${DATA_DIRECTORY}/tailscaled.state"
 if [[ -f "${extracted_data}/final_serve_reset_is_done" ]]; then
-  cp "${extracted_data}/final_serve_reset_is_done" /data/final_serve_reset_is_done
+  cp \
+    "${extracted_data}/final_serve_reset_is_done" \
+    "${DATA_DIRECTORY}/final_serve_reset_is_done"
 fi
-chown -R root:root /data/state /data/tailscaled.state
-chmod 0600 /data/tailscaled.state
-chmod -R go-rwx /data/state
-if [[ -f /data/final_serve_reset_is_done ]]; then
-  chown root:root /data/final_serve_reset_is_done
-  chmod 0600 /data/final_serve_reset_is_done
+chown -R \
+  root:root \
+  "${DATA_DIRECTORY}/state" \
+  "${DATA_DIRECTORY}/tailscaled.state"
+chmod 0600 "${DATA_DIRECTORY}/tailscaled.state"
+chmod -R go-rwx "${DATA_DIRECTORY}/state"
+if [[ -f "${DATA_DIRECTORY}/final_serve_reset_is_done" ]]; then
+  chown root:root "${DATA_DIRECTORY}/final_serve_reset_is_done"
+  chmod 0600 "${DATA_DIRECTORY}/final_serve_reset_is_done"
 fi
 sync
 
 {
   printf 'source_backup=%s\n' "${backup_slug}"
+  printf 'source_selector=%s\n' "${source_selector}"
+  printf 'source_archive=%s\n' "${source_addon_archive}"
   printf 'completed_at=%s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 } > "${COMPLETION_MARKER}"
 chmod 0600 "${COMPLETION_MARKER}"

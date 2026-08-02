@@ -84,6 +84,7 @@ advertise_routes:
 always_use_derp: false
 diagnostic_capture: false
 diagnostic_seed_backup: ""
+diagnostic_seed_source: disabled
 exit_node: 100.101.102.103
 log_level: info
 login_server: "https://controlplane.tailscale.com"
@@ -214,6 +215,17 @@ The import refuses to overwrite an existing identity and records a completion
 marker after success. Use it only as part of an explicitly validated migration
 with a current backup and rollback path. Clear the option after the import has
 completed.
+
+### Option: `diagnostic_seed_source`
+
+Selects the exact Home Assistant app identity whose archive is imported from
+`diagnostic_seed_backup`. Use `official` for the official Community Apps
+installation or `local` for a local-app installation. Other values are
+rejected, and `disabled` performs no import when the backup slug is blank.
+
+Set this before the managed app's first start. The selected source archive must
+exist in the backup and contain the required Tailscale state. After the one-time
+import succeeds, clear the backup slug and set this option back to `disabled`.
 
 ### Option: `exit_node`
 
