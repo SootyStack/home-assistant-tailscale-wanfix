@@ -1,0 +1,24 @@
+{
+  "baseline": {
+    "commit": "25b151d15b45d9b89dde6af549d96b19ffe6004c",
+    "repository": "hassio-addons/app-tailscale",
+    "tag": "v0.28.1",
+    "tree": "e439df9edaadf37bc88d0f8a8ea8e751cb1e2769",
+    "version": "0.28.1"
+  },
+  "candidate": {
+    "release_url": "https://github.com/hassio-addons/app-tailscale/releases/tag/v0.30.2",
+    "repository": "hassio-addons/app-tailscale",
+    "tag": "v0.30.2",
+    "version": "0.30.2"
+  },
+  "kind": "home_assistant_app_upstream_release",
+  "policy": {
+    "automatic_merge": false,
+    "automatic_publish": false,
+    "automatic_rebase": false,
+    "live_system_contact": false
+  },
+  "schema_version": 1,
+  "status": "review_required"
+}
