@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.30.5-wanfix.1 (unpublished candidate)
+
+- Upgrade the exact official app baseline to `v0.30.5` and Tailscale to
+  `v1.104.4`, retaining immediate STUN IPv4 recovery and adding a map-watchdog
+  transport reset for silent connection failures.
+- Port managed diagnostic pipelines to the current s6 user-bundle layout.
+- Preserve upstream option migrations, new-install defaults, and MagicDNS
+  reconfigurator health accounting.
+- Keep diagnostic capture opt-in and identity seeding disabled for routine
+  upgrades. Publication, installation, and live verification remain separate.
+
 ## 0.28.1-wanfix.3
 
 - Allow a one-time identity seed to select either the official Community Apps

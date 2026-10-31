@@ -9,17 +9,21 @@ diagnostics.
 This is an independent custom app. It is not an official Home Assistant,
 Tailscale, or Home Assistant Community Apps release.
 
-## Current release state
+## Upgrade candidate
 
-Version `0.28.1-wanfix.3`, based on official app `v0.28.1`, is published as a
-public, signed multi-architecture image. Its immutable index digest is
-`sha256:8cfd8512dc76baa0193367103dcc305910e361eb556579149fbf33abb053397b`.
-Anonymous pulls, platform mapping, source labels, certificate identity, and
-transparency-log inclusion have been verified.
+Version `0.30.5-wanfix.1` targets official app `v0.30.5` and Tailscale
+`v1.104.4`, built with Go `1.27.3`. It combines immediate control reconnection
+when STUN detects a new public IPv4 address with recovery after the map
+watchdog detects a silent connection failure.
 
-The release has not been installed, activated, or live-verified. Those remain
-separate Home Assistant operations and are recorded independently in
-[`release-manifest.json`](release-manifest.json).
+This branch is an unpublished upgrade candidate. The stable `main` branch
+continues to advertise `0.28.1-wanfix.3` until an immutable replacement is
+published and verified. Candidate validation does not establish installation,
+activation, remote access, or WAN failover behavior.
+
+Source and release boundaries are recorded in
+[`release-manifest.json`](release-manifest.json). Pull-request CI builds both
+architectures without publishing and runs control-client regression tests.
 
 ## Release policy
 
@@ -35,6 +39,19 @@ separate Home Assistant operations and are recorded independently in
 
 See [`UPSTREAM.md`](UPSTREAM.md) for provenance and
 [`tailscale/DOCS.md`](tailscale/DOCS.md) for app configuration.
+
+## Upgrade validation
+
+The candidate ports diagnostics and identity migration onto the new app's
+startup scripts, configuration schema, and service bundle layout. Existing
+network preferences must survive migration; the identity-seeding options
+remain disabled by default. Configuration migration, bounded logging, and
+service registration are tested separately from the Go recovery patch.
+
+Before deployment, require the candidate's source, Linux recovery, amd64, and
+aarch64 CI checks to pass. Publication and installation are later phases;
+never merge an unpublished candidate into the stable branch. A Samba copy
+alone does not install or activate this managed container image.
 
 ## Home Assistant identity
 

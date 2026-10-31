@@ -46,6 +46,13 @@ jobs:
           --pattern 'test_*.py'
           --verbose
 
+      - name: Require migration test dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          command -v bash
+          command -v jq
+
       - name: Run focused unit tests
         run: >-
           python3 -m unittest discover
@@ -79,7 +86,9 @@ jobs:
         run: |
           set -Eeuo pipefail
           mapfile -t shell_files < "${RUNNER_TEMP}/bash-sources.txt"
-          bash -n "${shell_files[@]}"
+          for shell_file in "${shell_files[@]}"; do
+            bash -n "${shell_file}"
+          done
 
       - name: Reject ShellCheck errors across all inherited Bash sources
         shell: bash
@@ -87,7 +96,7 @@ jobs:
           set -Eeuo pipefail
           shellcheck --version
           mapfile -t shell_files < "${RUNNER_TEMP}/bash-sources.txt"
-          # The pinned upstream 0.28.1 source has an existing warning and info
+          # The pinned upstream source has an existing warning and info
           # baseline. Continue to reject errors everywhere without making this
           # managed release responsible for unrelated upstream cleanup.
           shellcheck --severity=error --shell=bash "${shell_files[@]}"
@@ -138,8 +147,73 @@ jobs:
             }
           done
 
-          sh -n "${managed_sh_files[@]}"
+          for shell_file in "${managed_sh_files[@]}"; do
+            sh -n "${shell_file}"
+          done
           shellcheck --shell=sh "${managed_sh_files[@]}"
+
+  control:
+    name: Linux control recovery and race tests
+    needs:
+      - source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - name: Check out the candidate source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the exact Go toolchain
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          # Checksum published at https://go.dev/dl/?mode=json&include=all.
+          archive="${RUNNER_TEMP}/go1.27.3.linux-amd64.tar.gz"
+          curl --fail --location --retry 3 \
+            https://go.dev/dl/go1.27.3.linux-amd64.tar.gz \
+            --output "${archive}"
+          printf '%s  %s\n' \
+            65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40 \
+            "${archive}" | sha256sum --check --strict
+          tar -xzf "${archive}" -C "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}/go/bin" >> "${GITHUB_PATH}"
+
+      - name: Reproduce the locked patched Tailscale source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          tag="$(python3 scripts/release_contract.py --get upstream.tailscale.tag)"
+          commit="$(python3 scripts/release_contract.py --get upstream.tailscale.commit)"
+          git clone --depth 1 --branch "${tag}" \
+            https://github.com/tailscale/tailscale.git "${RUNNER_TEMP}/tailscale"
+          test "$(git -C "${RUNNER_TEMP}/tailscale" rev-parse HEAD)" = "${commit}"
+          patch="${GITHUB_WORKSPACE}/tailscale/patches/tailscale-1.104.4-wan-control-recovery.patch"
+          git -C "${RUNNER_TEMP}/tailscale" apply --check "${patch}"
+          git -C "${RUNNER_TEMP}/tailscale" apply "${patch}"
+          git -C "${RUNNER_TEMP}/tailscale" add --all
+          expected_tree="$(python3 scripts/release_contract.py --get upstream.tailscale.patched_tree)"
+          test "$(git -C "${RUNNER_TEMP}/tailscale" write-tree)" = "${expected_tree}"
+          test "$(go version)" = 'go version go1.27.3 linux/amd64'
+
+      - name: Test all control packages
+        working-directory: ${{ runner.temp }}/tailscale
+        run: go test -timeout 10m ./control/...
+
+      - name: Repeat focused WAN and watchdog regressions
+        working-directory: ${{ runner.temp }}/tailscale
+        run: >-
+          go test -timeout 10m -count=100
+          -run 'Test(STUNEndpointIPChange|UpdateEndpointsResetsNoiseClient|MapWatchdog|DropNoiseClient)'
+          ./control/controlclient
+
+      - name: Check control packages with the race detector
+        working-directory: ${{ runner.temp }}/tailscale
+        env:
+          CGO_ENABLED: "1"
+        run: go test -race -timeout 10m ./control/controlclient ./control/ts2021
 
   prepare:
     name: Prepare build matrix
@@ -180,6 +254,7 @@ jobs:
     name: Build ${{ matrix.arch }}
     needs:
       - source
+      - control
       - prepare
     runs-on: ${{ matrix.os }}
     strategy:
@@ -208,5 +283,30 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+          load: true
           push: false
           version: ${{ needs.prepare.outputs.version }}
+
+      - name: Smoke test the built runtime without network access
+        shell: bash
+        env:
+          IMAGE: ${{ matrix.image }}:${{ needs.prepare.outputs.version }}
+        run: |
+          set -Eeuo pipefail
+          version="$(python3 scripts/release_contract.py --get upstream.tailscale.version)"
+          docker run --rm --network none --entrypoint /bin/bash \
+            --env "EXPECTED_TAILSCALE_VERSION=${version}" \
+            "${IMAGE}" -euo pipefail -c '
+              /opt/tailscale version | head -n 1 | grep -Fq "${EXPECTED_TAILSCALE_VERSION}"
+              /opt/tailscaled --version | head -n 1 | grep -Fq "${EXPECTED_TAILSCALE_VERSION}"
+              for executable in /usr/bin/tailscale-diagnostic-* /usr/bin/tailscale-diagnostics-* /usr/bin/healthcheck; do
+                test -x "${executable}"
+              done
+              for pipeline in tailscale-diagnostics-daemon-pipeline tailscale-diagnostics-state-pipeline; do
+                test -f "/etc/s6-overlay/user-bundles.d/user/contents.d/${pipeline}"
+              done
+              test -f /etc/s6-overlay/s6-rc.d/tailscaled/dependencies.d/tailscale-diagnostics-seed
+              test -x /etc/s6-overlay/scripts/stage2_hook.sh
+              actual="$(printf "%s\n" "tskey-test-only Bearer test-only" | /usr/bin/tailscale-diagnostic-sanitize)"
+              test "${actual}" = "<redacted-tskey> Bearer <redacted>"
+            '

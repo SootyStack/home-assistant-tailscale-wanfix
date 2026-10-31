@@ -137,6 +137,7 @@ jobs:
 
           required_checks=(
             "Source contract, tests, and shell checks"
+            "Linux control recovery and race tests"
             "Build amd64"
             "Build aarch64"
           )
