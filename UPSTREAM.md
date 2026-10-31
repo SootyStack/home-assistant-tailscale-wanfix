@@ -1,12 +1,38 @@
 # Upstream and patch policy
 
 The current candidate is derived from Home Assistant Community Apps Tailscale
-`v0.28.1`, commit `25b151d15b45d9b89dde6af549d96b19ffe6004c`.
-It embeds Tailscale `v1.96.4`, commit
-`41cb72f27119f95b859335f3ffc3434d6ca55e23`.
+`v0.30.5`, commit `0dfb3a6c3b7849bea0ab518c35faf649916da244`.
+It embeds Tailscale `v1.104.4`, commit
+`27047635f237d1f3e0b08c0f487674757f30d2f7`, built with Go `1.27.3`.
 
 The exact source commits, trees, patch digest, image name, and validation state
 are machine-readable in [`release-manifest.json`](release-manifest.json).
+
+## Control recovery patch
+
+The combined patch ports two independent upstream proposals:
+
+- [SootyStack's PR #20618](https://github.com/tailscale/tailscale/pull/20618),
+  head `74d1ba1df204b24aaeca9af7317f71221592510f`, resets the control transport
+  when a new STUN-discovered public IPv4 appears. Initial discovery, port-only
+  changes, IPv6 endpoints, endpoint removal, and empty results do not trigger
+  the reset. The submitted implementation replaces the older packaged patch's
+  login, first-map, and pause guards, including a reset while paused.
+- [FrankTub's PR #21834](https://github.com/tailscale/tailscale/pull/21834),
+  head `ef4028e7b7b19f513188bff0794a591d998c44d6`, discards the specific Noise
+  client used by a map request after the existing two-minute watchdog expires.
+  It supplies fallback recovery when STUN does not signal a new IPv4 address.
+
+Both proposals remain unmerged at intake. The combined patch retains upstream
+copyright and license notices and adds regression coverage for recovery and
+concurrent client replacement. Neither mechanism restarts the daemon or adds
+periodic probes to a healthy control connection.
+
+The app overlay retains bounded, sanitized diagnostics and guarded one-time
+identity migration. It uses the new upstream service bundle paths and option
+migrations. Legacy `local_subnets` migration fails without changing the saved
+route selection when discovery is unavailable, allowing a later startup to
+retry instead of silently discarding the setting.
 
 ## Intake rules
 

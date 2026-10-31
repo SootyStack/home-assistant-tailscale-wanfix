@@ -23,38 +23,84 @@ import upstream_intake  # noqa: E402
 
 
 class ReleaseContractTests(unittest.TestCase):
+    def _published_fixture(self, clone: Path) -> dict:
+        """Give a temporary copy internally consistent synthetic publication data."""
+        manifest_path = clone / "release-manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["status"] = "published_verified_not_installed"
+        image = manifest["release"]["image"]
+        version = manifest["release"]["custom_version"]
+        repository = manifest["repository"]["canonical_url"]
+        image_prefix, image_name = image.rsplit("/", 1)
+        manifest["release"]["publication"] = {
+            "source_commit": "1" * 40,
+            "image_reference": f"{image}:{version}",
+            "image_index_digest": "sha256:" + "2" * 64,
+            "image_index_media_type": "application/vnd.oci.image.index.v1+json",
+            "published_at_utc": "2026-10-31T00:00:00Z",
+            "workflow_run_id": 1,
+            "workflow_run_url": f"{repository}/actions/runs/1",
+            "architectures": {
+                architecture: {
+                    "image": f"{image_prefix}/{architecture}-{image_name}",
+                    "image_index_digest": "sha256:" + "3" * 64,
+                    "platform": platform,
+                    "manifest_digest": "sha256:" + "4" * 64,
+                    "config_digest": "sha256:" + "5" * 64,
+                }
+                for architecture, platform in (
+                    ("amd64", "linux/amd64"), ("aarch64", "linux/arm64")
+                )
+            },
+            "signature": {
+                "verifier": "cosign v3.0.6",
+                "certificate_identity": (
+                    f"{repository}/.github/workflows/release.yaml@refs/heads/main"
+                ),
+                "certificate_oidc_issuer": "https://token.actions.githubusercontent.com",
+                "transparency_log_verified": True,
+            },
+        }
+        for key in (
+            "multi_arch_images_built", "published", "anonymous_pull_verified",
+            "signature_verified",
+        ):
+            manifest["verification"][key] = True
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        config = clone / "tailscale" / "config.yaml"
+        config.write_text(
+            config.read_text(encoding="utf-8").replace(
+                "stage: experimental", "stage: stable"
+            ),
+            encoding="utf-8",
+            newline="\n",
+        )
+        return manifest
+
     def test_current_repository_satisfies_contract_and_getter(self) -> None:
         manifest = release_contract.validate_repository(ROOT)
         self.assertEqual(
             release_contract.resolve_dotted(manifest, "release.custom_version"),
-            "0.28.1-wanfix.3",
+            "0.30.5-wanfix.1",
         )
 
         lookups = {
-            "status": "published_verified_not_installed",
-            "release.custom_version": "0.28.1-wanfix.3",
-            "release.publication.source_commit": (
-                "f462f6c3dae3eb27809a484b4d24f94cb12e9514"
-            ),
-            "release.publication.image_index_digest": (
-                "sha256:8cfd8512dc76baa0193367103dcc305910e361eb556579149fbf33abb053397b"
-            ),
+            "status": manifest["status"],
+            "release.custom_version": "0.30.5-wanfix.1",
+            "upstream.tailscale.version": "1.104.4",
             "upstream.app.runtime_image": (
-                "ghcr.io/hassio-addons/tailscale:0.28.1"
+                "ghcr.io/hassio-addons/tailscale:0.30.5"
             ),
             "upstream.app.runtime_image_index_digest": (
-                "sha256:2a15916111291ade93481fe17f4b30107610b1d510c02f7645d83a36fad4aece"
+                "sha256:edf3932b4bd5205df4ed94809b622286465259b206e4ccaa1046c020c50328a8"
             ),
-            "build.builder_image": "golang:1.26.1-alpine",
+            "build.builder_image": "golang:1.27.3-alpine",
             "build.builder_image_index_digest": (
-                "sha256:2389ebfa5b7f43eeafbd6be0c3700cc46690ef842ad962f6c5bd6be49ed82039"
+                "sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb"
             ),
             "build.base_images_digest_pinned": "true",
-            "verification.anonymous_pull_verified": "true",
-            "verification.signature_verified": "true",
-            "source.candidate_commit": (
-                "d6b6ffd28711c40f83b2bd62d9c8b97f2aaaa2e3"
-            ),
+            "release.automatic_install": "false",
+            "source.candidate_commit": manifest["source"]["candidate_commit"],
         }
         for dotted_path, expected in lookups.items():
             with self.subTest(dotted_path=dotted_path):
@@ -78,10 +124,10 @@ class ReleaseContractTests(unittest.TestCase):
             )
             config = clone / "tailscale" / "config.yaml"
             content = config.read_text(encoding="utf-8")
-            expected = "version: 0.28.1-wanfix.3"
+            expected = "version: 0.30.5-wanfix.1"
             self.assertEqual(content.count(expected), 1)
             config.write_text(
-                content.replace(expected, "version: 0.28.1-wanfix.99"),
+                content.replace(expected, "version: 0.30.5-wanfix.99"),
                 encoding="utf-8",
                 newline="\n",
             )
@@ -136,16 +182,17 @@ class ReleaseContractTests(unittest.TestCase):
             )
 
     def test_unpinned_base_image_fails(self) -> None:
+        manifest = release_contract.load_manifest(ROOT)
         pinned_references = (
             (
-                "golang:1.26.1-alpine@sha256:"
-                "2389ebfa5b7f43eeafbd6be0c3700cc46690ef842ad962f6c5bd6be49ed82039",
-                "golang:1.26.1-alpine",
+                manifest["build"]["builder_image"] + "@"
+                + manifest["build"]["builder_image_index_digest"],
+                manifest["build"]["builder_image"],
             ),
             (
-                "ghcr.io/hassio-addons/tailscale:0.28.1@sha256:"
-                "2a15916111291ade93481fe17f4b30107610b1d510c02f7645d83a36fad4aece",
-                "ghcr.io/hassio-addons/tailscale:0.28.1",
+                manifest["upstream"]["app"]["runtime_image"] + "@"
+                + manifest["upstream"]["app"]["runtime_image_index_digest"],
+                manifest["upstream"]["app"]["runtime_image"],
             ),
         )
         for pinned, unpinned in pinned_references:
@@ -208,11 +255,12 @@ class ReleaseContractTests(unittest.TestCase):
                     ".git", "__pycache__", "upstream-candidates"
                 ),
             )
-            manifest_path = clone / "release-manifest.json"
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest = self._published_fixture(clone)
+            release_contract.validate_repository(clone)
             manifest["release"]["publication"]["image_index_digest"] = (
                 "sha256:NOT-A-PUBLISHED-DIGEST"
             )
+            manifest_path = clone / "release-manifest.json"
             manifest_path.write_text(
                 json.dumps(manifest, indent=2) + "\n",
                 encoding="utf-8",
@@ -233,6 +281,12 @@ class UpstreamIntakeTests(unittest.TestCase):
         shutil.copyfile(
             ROOT / "release-manifest.json", self.root / "release-manifest.json"
         )
+        # Intake tests use a fixed baseline independent of the candidate release.
+        manifest_path = self.root / "release-manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["upstream"]["app"]["version"] = "0.28.1"
+        manifest["upstream"]["app"]["tag"] = "v0.28.1"
+        manifest_path.write_text(json.dumps(manifest) + "\n", encoding="utf-8")
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
